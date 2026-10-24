@@ -1,0 +1,18 @@
+# systemd: copia a /etc/systemd/system/ingresosbot.service y ajusta User y rutas.
+#   sudo systemctl daemon-reload && sudo systemctl enable --now ingresosbot
+#   journalctl -u ingresosbot -f        # ver el log en vivo
+[Unit]
+Description=Ingresosbot paper trading 24/7
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/Ingresosbot
+ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --env-file .env --log-file logs/bot.log
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
