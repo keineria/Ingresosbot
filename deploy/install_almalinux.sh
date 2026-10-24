@@ -88,5 +88,5 @@ cat <<MSG
 
 Siguiente paso: completa WEBHOOK_URL / TELEGRAM_* en $APP_DIR/.env, reinicia con
   sudo systemctl restart ingresosbot ingresosbot-web
-y publica el panel con SSL siguiendo deploy/CYBERPANEL_SETUP.md.
+y publica el panel con SSL en https://bot.commonbird.com siguiendo deploy/CYBERPANEL_SETUP.md.
 MSG

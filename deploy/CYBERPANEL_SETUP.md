@@ -6,19 +6,21 @@ Antes de empezar: ejecuta `sudo bash deploy/install_almalinux.sh` y comprueba qu
 
 ## 1. Crear el subdominio
 
-1. En tu proveedor de DNS crea un registro **A**: `bot.tudominio.com` → IP del VPS.
-2. En CyberPanel: **Websites → Create Sub Domain** (o **Create Website** si quieres un dominio aparte).
-   - Domain: `bot.tudominio.com`
+Dominio del panel: **`bot.commonbird.com`**.
+
+1. En el DNS de `commonbird.com` crea un registro **A**: `bot` → IP del VPS (queda `bot.commonbird.com`).
+2. En CyberPanel: **Websites → Create Sub Domain**, eligiendo `commonbird.com` como sitio padre (si `commonbird.com` no está en este CyberPanel, usa **Create Website** con `bot.commonbird.com`).
+   - Domain: `bot.commonbird.com`
    - Path: el que propone por defecto (no se usa; el contenido lo sirve el bot).
    - PHP: cualquiera (no se usa).
 
 ## 2. Emitir el SSL gratis (Let's Encrypt)
 
-**SSL → Manage SSL** → selecciona `bot.tudominio.com` → **Issue SSL**. Espera a que el DNS ya apunte al VPS; si falla, vuelve a intentarlo unos minutos después.
+**SSL → Manage SSL** → selecciona `bot.commonbird.com` → **Issue SSL**. Espera a que el DNS ya apunte al VPS; si falla, vuelve a intentarlo unos minutos después.
 
 ## 3. Proxy inverso hacia 127.0.0.1:8050
 
-**Websites → List Websites → bot.tudominio.com → Manage → vHost Conf** y añade al final:
+**Websites → List Websites → bot.commonbird.com → Manage → vHost Conf** y añade al final:
 
 ```
 extprocessor ingresosbot {
@@ -48,7 +50,7 @@ RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
 
 Reinicia OpenLiteSpeed: **Server Status → LiteSpeed Status → Reboot Litespeed** (o `sudo systemctl restart lsws`).
 
-Abre `https://bot.tudominio.com/?key=TU_DASHBOARD_ACCESS_KEY` una sola vez: la página guarda la clave en ese navegador y la quita de la URL.
+Abre `https://bot.commonbird.com/?key=TU_DASHBOARD_ACCESS_KEY` una sola vez: la página guarda la clave en ese navegador y la quita de la URL.
 
 ## Si algo falla
 
