@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -39,9 +40,6 @@ from notifier import Notifier, load_env_file
 from state_manager import StateManager
 
 log = logging.getLogger("bot_runner")
-
-META_SCHEMA = "CREATE TABLE IF NOT EXISTS runner_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-
 
 @dataclass
 class RunnerConfig:
@@ -76,23 +74,12 @@ class BotRunner:
         self.step = INTERVAL_MS[cfg.interval]
         self.max_price_gap = cfg.max_price_gap_pct / 100.0
         self.sm = StateManager(cfg.db_path, cfg.initial_balance, self.p, cfg.fee_pct)
-        self.sm.conn.execute(META_SCHEMA)
-        self.sm.conn.commit()
         self._seen_transitions = 0
         self._stop = False
 
     # ── Utilidades ──────────────────────────────────────────────────────────
     def _default_candles(self, symbol: str, interval: str, limit: int) -> pd.DataFrame:
         return fetch_candles(symbol, interval, limit)[0]
-
-    def _meta_get(self, key: str) -> str | None:
-        row = self.sm.conn.execute("SELECT value FROM runner_meta WHERE key = ?", (key,)).fetchone()
-        return row[0] if row else None
-
-    def _meta_set(self, key: str, value: str) -> None:
-        self.sm.conn.execute("INSERT INTO runner_meta (key, value) VALUES (?, ?) "
-                             "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
-        self.sm.conn.commit()
 
     def last_closed_bar_open_ms(self, now_s: float | None = None) -> int:
         now_ms = int((self.clock() if now_s is None else now_s) * 1000)
@@ -123,7 +110,7 @@ class BotRunner:
     def candle_cycle(self, now_s: float | None = None) -> dict:
         bar_open = self.last_closed_bar_open_ms(now_s)
         bar_close_iso = _iso(bar_open + self.step)
-        last = self._meta_get("last_bar_open_ms")
+        last = self.sm.meta_get("last_bar_open_ms")
         if last is not None and int(last) >= bar_open:
             return {"skipped": True, "bar_open": _iso(bar_open)}
 
@@ -145,8 +132,10 @@ class BotRunner:
                 log.exception("Error procesando %s", symbol)
                 summary["symbols"][symbol] = {"error": f"{type(exc).__name__}: {exc}"}
         self._flush_status_alerts()
-        self._meta_set("last_bar_open_ms", str(bar_open))
+        self.sm.meta_set("last_bar_open_ms", str(bar_open))
         summary["status"] = self.sm.account()["status"]
+        summary["processed_at"] = pd.Timestamp(self.clock(), unit="s", tz="UTC").isoformat()
+        self.sm.meta_set("last_cycle", json.dumps(summary, ensure_ascii=False, default=str))
         return summary
 
     def _process_symbol(self, symbol: str, bar_open: int, bar_close_iso: str) -> dict:
@@ -247,15 +236,46 @@ class BotRunner:
         self.sm.close()
 
 
+def parse_params(raw: str | None, no_short: bool = False) -> q.Params:
+    """Params desde un JSON (cadena o ruta de archivo), igual que --params en el resto de scripts."""
+    p = q.Params()
+    if raw:
+        src = Path(raw)
+        for k, v in json.loads(src.read_text(encoding="utf-8") if src.exists() else raw).items():
+            if not hasattr(p, k):
+                raise SystemExit(f"Parámetro desconocido: {k}")
+            setattr(p, k, type(getattr(p, k))(v))
+    if no_short:
+        p.allow_short = False
+    return p
+
+
+def settings_from_env(symbols: str | None = None, interval: str | None = None, db: str | None = None,
+                      balance: float | None = None, params: str | None = None,
+                      no_short: bool = False) -> tuple[RunnerConfig, q.Params]:
+    """Una sola fuente de configuración para bot_runner.py y web_server.py:
+    argumento > variable del .env (BOT_SYMBOLS, BOT_INTERVAL, BOT_DB, BOT_BALANCE, BOT_PARAMS, BOT_NO_SHORT) > defecto."""
+    env = os.environ.get
+    syms = symbols or env("BOT_SYMBOLS") or "BTCUSDT,ETHUSDT,SOLUSDT"
+    cfg = RunnerConfig(
+        [s.strip().upper() for s in syms.split(",") if s.strip()],
+        interval or env("BOT_INTERVAL") or "1h",
+        db or env("BOT_DB") or "data/trading_state.db",
+        float(balance if balance is not None else env("BOT_BALANCE") or 10000.0),
+    )
+    no_short = no_short or env("BOT_NO_SHORT", "").strip().lower() in ("1", "true", "yes", "si", "sí")
+    return cfg, parse_params(params or env("BOT_PARAMS"), no_short)
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Bot 24/7 en paper trading.")
-    ap.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT")
-    ap.add_argument("--interval", default="1h", choices=["1h", "4h"])
-    ap.add_argument("--db", default="data/trading_state.db")
-    ap.add_argument("--balance", type=float, default=10000.0, help="Balance inicial (solo si la base es nueva)")
+    ap = argparse.ArgumentParser(description="Bot 24/7 en paper trading. Sin argumentos usa el .env.")
+    ap.add_argument("--symbols", help="Por defecto BOT_SYMBOLS o BTCUSDT,ETHUSDT,SOLUSDT")
+    ap.add_argument("--interval", choices=["1h", "4h"], help="Por defecto BOT_INTERVAL o 1h")
+    ap.add_argument("--db", help="Por defecto BOT_DB o data/trading_state.db")
+    ap.add_argument("--balance", type=float, help="Balance inicial (solo si la base es nueva); BOT_BALANCE")
     ap.add_argument("--fee", type=float, default=0.08)
     ap.add_argument("--watch-seconds", type=float, default=15.0)
-    ap.add_argument("--params", help="JSON con parámetros a sobrescribir (ver Params)")
+    ap.add_argument("--params", help="JSON con parámetros a sobrescribir (ver Params); BOT_PARAMS")
     ap.add_argument("--no-short", action="store_true")
     ap.add_argument("--env-file", default=".env")
     ap.add_argument("--log-file")
@@ -270,18 +290,10 @@ def main(argv: list[str] | None = None) -> int:
                         handlers=handlers)
     load_env_file(args.env_file)
 
-    p = q.Params()
-    if args.params:
-        src = Path(args.params)
-        for k, v in json.loads(src.read_text(encoding="utf-8") if src.exists() else args.params).items():
-            if not hasattr(p, k):
-                raise SystemExit(f"Parámetro desconocido: {k}")
-            setattr(p, k, type(getattr(p, k))(v))
-    if args.no_short:
-        p.allow_short = False
-
-    cfg = RunnerConfig([s.strip().upper() for s in args.symbols.split(",") if s.strip()], args.interval,
-                       args.db, args.balance, args.fee, watch_seconds=args.watch_seconds)
+    cfg, p = settings_from_env(args.symbols, args.interval, args.db, args.balance, args.params, args.no_short)
+    if cfg.interval not in ("1h", "4h"):
+        raise SystemExit(f"BOT_INTERVAL debe ser 1h o 4h (recibido {cfg.interval})")
+    cfg.fee_pct, cfg.watch_seconds = args.fee, args.watch_seconds
     bot = BotRunner(cfg, p)
     if not bot.notifier.enabled:
         log.warning("Sin WEBHOOK_URL ni TELEGRAM_*: las alertas solo irán al log")

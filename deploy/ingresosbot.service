@@ -1,6 +1,8 @@
-# systemd: copia a /etc/systemd/system/ingresosbot.service y ajusta User y rutas.
+# systemd: bot 24/7 (paper trading). deploy/install_almalinux.sh lo instala y ajusta User y rutas.
+# A mano: copia a /etc/systemd/system/, cambia User/rutas y ejecuta
 #   sudo systemctl daemon-reload && sudo systemctl enable --now ingresosbot
 #   journalctl -u ingresosbot -f        # ver el log en vivo
+# Pares, temporalidad, base y parámetros salen del .env (BOT_SYMBOLS, BOT_INTERVAL, BOT_DB, BOT_PARAMS).
 [Unit]
 Description=Ingresosbot paper trading 24/7
 After=network-online.target
@@ -8,11 +10,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
+User=ingresosbot
+Group=ingresosbot
 WorkingDirectory=/opt/Ingresosbot
-ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --env-file .env --log-file logs/bot.log
+ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --env-file .env --log-file logs/bot.log
 Restart=always
 RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
