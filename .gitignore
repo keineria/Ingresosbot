@@ -4,3 +4,4 @@ data/*.db
 data/*.db-journal
 .env
 logs/
+.venv/

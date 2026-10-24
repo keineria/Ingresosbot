@@ -42,7 +42,7 @@ import numpy as np
 import pandas as pd
 
 ENGINE_NAME = "quant_core_engine"
-ENGINE_VERSION = "1.1.0"
+ENGINE_VERSION = "1.2.0"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -293,6 +293,7 @@ class AccountState:
     consecutive_losses: int = 0
     daily_drawdown_pct: float = 0.0
     cooldown_candles_remaining: int = 0
+    manual_halt: bool = False          # kill switch manual (panel web / API)
 
     @classmethod
     def from_dict(cls, d: dict) -> "AccountState":
@@ -301,6 +302,7 @@ class AccountState:
             consecutive_losses=int(d.get("consecutive_losses", 0)),
             daily_drawdown_pct=float(d.get("daily_drawdown_pct", 0.0)),
             cooldown_candles_remaining=int(d.get("cooldown_candles_remaining", 0)),
+            manual_halt=bool(d.get("manual_halt", False)),
         )
 
 
@@ -313,7 +315,10 @@ def circuit_breaker(state: AccountState, p: Params) -> dict:
                 "daily_drawdown_pct": state.daily_drawdown_pct,
                 "reasons": ["balance <= 0"], "abort_analysis": True}
 
-    if state.cooldown_candles_remaining > 0:
+    if state.manual_halt:
+        reasons.append("kill switch manual activado")
+        status, cooldown = "HALTED", state.cooldown_candles_remaining
+    elif state.cooldown_candles_remaining > 0:
         reasons.append(f"enfriamiento en curso: quedan {state.cooldown_candles_remaining} velas")
         status, cooldown = "HALTED", state.cooldown_candles_remaining
     else:
@@ -342,6 +347,7 @@ def circuit_breaker(state: AccountState, p: Params) -> dict:
         "consecutive_losses": state.consecutive_losses,
         "daily_drawdown_pct": round(state.daily_drawdown_pct, 4),
         "reasons": reasons,
+        "manual_halt": state.manual_halt,
         "abort_analysis": status == "HALTED",
     }
 

@@ -20,7 +20,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `market_fetcher.py` | Velas públicas sin API key: Binance → data-api.binance.vision → Bybit → CSV local (`data/candles/`) |
 | `backtester.py` | Backtest vela a vela con engine + state_manager, comisión 0.08% por orden |
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
-| `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre y cambios del Circuit Breaker |
+| `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
+| `web_server.py` + `static/index.html` | Panel dark mode y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |
 
 ```bash
 pip install pandas numpy
@@ -63,11 +64,18 @@ python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 4h --log-file 
 python -m unittest discover -s tests -v
 ```
 
-### Bot 24/7 en un VPS
+### Bot 24/7 en un VPS (AlmaLinux 9 + CyberPanel 3.0)
 
-1. `git clone` en `/opt/Ingresosbot`, `python3 -m venv .venv && .venv/bin/pip install pandas numpy`.
-2. Crea `.env` a partir de `.env.example`.
-3. Instala el servicio: `deploy/ingresosbot.service` (instrucciones dentro). systemd lo reinicia si se cae.
+```bash
+sudo git clone https://github.com/keineria/Ingresosbot.git /opt/Ingresosbot
+cd /opt/Ingresosbot && sudo bash deploy/install_almalinux.sh
+```
+
+El instalador crea el usuario de servicio `ingresosbot`, el `.venv` con pandas y numpy, el `.env` (con una `DASHBOARD_ACCESS_KEY` aleatoria) y deja activos `ingresosbot.service` (bot) e `ingresosbot-web.service` (panel). Para publicar el panel con SSL en `https://bot.commonbird.com` sin abrir puertos sigue [deploy/CYBERPANEL_SETUP.md](deploy/CYBERPANEL_SETUP.md). Para actualizar: `sudo git -C /opt/Ingresosbot pull && sudo bash deploy/install_almalinux.sh`.
+
+Toda la configuración vive en `.env` (`BOT_SYMBOLS`, `BOT_INTERVAL`, `BOT_PARAMS`, `WEB_PORT`, alertas...), y la leen tanto el bot como el panel.
+
+**Kill switch**: desde el panel (o `POST /api/kill-switch`) pone la cuenta en `HALTED` al instante; el bot, que es otro proceso, lo ve en su siguiente ciclo porque el interruptor vive en SQLite. Las posiciones abiertas siguen protegidas por su SL/TP. Al desactivarlo, el estado vuelve a lo que digan las reglas del Circuit Breaker: si había 3 pérdidas o DD ≥ 3%, sigue en `HALTED` hasta terminar el enfriamiento.
 
 Cómo se comporta:
 - **Una posición por par** y nunca más capital comprometido que `85% × max_leverage` del balance entre todos los pares: si la primera señal ya usa el tope, las demás se omiten (`SKIPPED`).

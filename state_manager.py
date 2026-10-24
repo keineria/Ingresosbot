@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS account_state (
                             CHECK (status IN ('ACTIVE', 'THROTTLED', 'HALTED')),
     day_peak_equity         REAL    NOT NULL,
     current_day             TEXT,
-    updated_at              TEXT    NOT NULL
+    updated_at              TEXT    NOT NULL,
+    manual_halt             INTEGER NOT NULL DEFAULT 0 CHECK (manual_halt IN (0, 1))
 );
 CREATE TABLE IF NOT EXISTS open_positions (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,6 +80,19 @@ CREATE TABLE IF NOT EXISTS trade_history (
     risk_mode         TEXT,
     opened_at         TEXT    NOT NULL,
     closed_at         TEXT    NOT NULL
+);
+CREATE TABLE IF NOT EXISTS runner_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS control_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    at            TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    reason        TEXT,
+    source        TEXT,
+    status_before TEXT NOT NULL,
+    status_after  TEXT NOT NULL
 );
 """
 
@@ -131,9 +145,16 @@ class StateManager:
         self.fee = fee_pct / 100.0
         if str(db_path) != ":memory:":
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(db_path))
+        # bot_runner.py y web_server.py comparten el archivo: WAL + timeout evitan "database is locked".
+        self.conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        if str(db_path) != ":memory:":
+            self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(account_state)")}
+        if "manual_halt" not in cols:      # bases creadas antes de la Fase 4
+            self.conn.execute("ALTER TABLE account_state ADD COLUMN manual_halt INTEGER NOT NULL DEFAULT 0")
+            self.conn.commit()
         if self.conn.execute("SELECT COUNT(*) FROM account_state").fetchone()[0] == 0:
             self.conn.execute(
                 "INSERT INTO account_state (id, balance, initial_balance, day_peak_equity, updated_at) "
@@ -165,14 +186,19 @@ class StateManager:
         a = self.account()
         return {"balance": a["balance"], "consecutive_losses": a["consecutive_losses"],
                 "daily_drawdown_pct": a["daily_drawdown_pct"],
-                "cooldown_candles_remaining": a["cooldown_bars_remaining"]}
+                "cooldown_candles_remaining": a["cooldown_bars_remaining"],
+                "manual_halt": bool(a["manual_halt"])}
 
-    def _save_account(self, s: dict, at: Any = None) -> None:
-        cb = q.circuit_breaker(q.AccountState.from_dict({
+    def _status_for(self, s: dict, manual_halt: bool) -> dict:
+        return q.circuit_breaker(q.AccountState.from_dict({
             "balance": s["balance"], "consecutive_losses": s["consecutive_losses"],
             "daily_drawdown_pct": s["daily_drawdown_pct"],
-            "cooldown_candles_remaining": s["cooldown_bars_remaining"]}), self.p)
-        prev = self.account()["status"]
+            "cooldown_candles_remaining": s["cooldown_bars_remaining"], "manual_halt": manual_halt}), self.p)
+
+    def _save_account(self, s: dict, at: Any = None) -> None:
+        current = self.account()                     # manual_halt siempre fresco: lo escribe otro proceso
+        cb = self._status_for(s, bool(current["manual_halt"]))
+        prev = current["status"]
         if cb["status"] != prev:
             self.status_transitions.append({"at": _ts(at) if at is not None else _now(),
                                             "from": prev, "to": cb["status"], "reasons": cb["reasons"]})
@@ -181,6 +207,36 @@ class StateManager:
             "cooldown_bars_remaining=?, status=?, day_peak_equity=?, current_day=?, updated_at=? WHERE id=1",
             (s["balance"], s["consecutive_losses"], s["daily_drawdown_pct"], s["cooldown_bars_remaining"],
              cb["status"], s["day_peak_equity"], s.get("current_day"), _now()))
+        self.conn.commit()
+
+    def set_manual_halt(self, on: bool, reason: str = "", source: str = "api") -> dict:
+        """Kill switch. Al desactivarlo el estado vuelve a lo que digan las reglas de la Capa 1
+        (si hay 3 pérdidas o DD >= 3% sigue en HALTED: el interruptor no se salta el Circuit Breaker)."""
+        a = self.account()
+        cb = self._status_for(a, on)
+        self.conn.execute("UPDATE account_state SET manual_halt=?, status=?, updated_at=? WHERE id=1",
+                          (int(on), cb["status"], _now()))
+        self.conn.execute("INSERT INTO control_log (at, action, reason, source, status_before, status_after) "
+                          "VALUES (?, ?, ?, ?, ?, ?)", (_now(), "KILL_SWITCH_ON" if on else "KILL_SWITCH_OFF",
+                                                         reason, source, a["status"], cb["status"]))
+        self.conn.commit()
+        if cb["status"] != a["status"]:
+            self.status_transitions.append({"at": _now(), "from": a["status"], "to": cb["status"],
+                                            "reasons": cb["reasons"]})
+        return {"manual_halt": on, "status_before": a["status"], "status_after": cb["status"],
+                "reasons": cb["reasons"]}
+
+    def control_log(self, limit: int = 20) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM control_log ORDER BY id DESC LIMIT ?", (limit,))]
+
+    # ── runner_meta (progreso del bot) ──────────────────────────────────────
+    def meta_get(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM runner_meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def meta_set(self, key: str, value: str) -> None:
+        self.conn.execute("INSERT INTO runner_meta (key, value) VALUES (?, ?) "
+                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
         self.conn.commit()
 
     def on_new_bar(self, bar_time: Any) -> None:
@@ -203,7 +259,8 @@ class StateManager:
                       breakeven_trigger: float, breakeven_stop_price: float, position_units: float,
                       risk_usd: float, opened_at: Any, regime: str | None = None,
                       risk_mode: str | None = None) -> int:
-        if self.account()["status"] == "HALTED":
+        a = self.account()
+        if a["status"] == "HALTED" or a["manual_halt"]:
             raise RuntimeError("Cuenta en HALTED: no se pueden abrir posiciones.")
         cur = self.conn.execute(
             "INSERT INTO open_positions (symbol, side, entry_price, stop_loss, take_profit, breakeven_trigger, "
@@ -323,8 +380,27 @@ class StateManager:
         return {"position_id": position_id, **trade}
 
     # ── Consultas ───────────────────────────────────────────────────────────
-    def trades(self) -> list[dict]:
-        return [dict(r) for r in self.conn.execute("SELECT * FROM trade_history ORDER BY id")]
+    def trades(self, last: int | None = None) -> list[dict]:
+        if last is None:
+            return [dict(r) for r in self.conn.execute("SELECT * FROM trade_history ORDER BY id")]
+        rows = self.conn.execute("SELECT * FROM trade_history ORDER BY id DESC LIMIT ?", (last,))
+        return [dict(r) for r in rows]
+
+    def metrics(self) -> dict:
+        """PnL neto, win rate y profit factor sobre todo el historial."""
+        r = self.conn.execute(
+            "SELECT COUNT(*) n, SUM(result='WIN') w, SUM(result='LOSS') l, SUM(result='BREAKEVEN') b, "
+            "COALESCE(SUM(CASE WHEN pnl_usd > 0 THEN pnl_usd END), 0) gw, "
+            "COALESCE(-SUM(CASE WHEN pnl_usd < 0 THEN pnl_usd END), 0) gl, "
+            "COALESCE(SUM(fees_usd), 0) fees FROM trade_history").fetchone()
+        a = self.account()
+        n = r["n"] or 0
+        return {"trades": n, "wins": r["w"] or 0, "losses": r["l"] or 0, "breakevens": r["b"] or 0,
+                "win_rate_pct": round((r["w"] or 0) / n * 100, 2) if n else None,
+                "profit_factor": round(r["gw"] / r["gl"], 3) if r["gl"] else None,
+                "net_pnl_usd": round(a["balance"] - a["initial_balance"], 2),
+                "net_pnl_pct": round((a["balance"] / a["initial_balance"] - 1) * 100, 2),
+                "total_fees_usd": round(r["fees"], 2)}
 
     def equity(self, prices: dict[str, float]) -> float:
         """Balance + PnL latente de las posiciones abiertas a los precios dados."""

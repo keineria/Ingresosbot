@@ -12,6 +12,7 @@ Eventos:
   break_even        Stop-Loss protegido en Break-Even
   position_closed   posición cerrada (WIN / LOSS / BREAKEVEN) con balance y racha
   status_changed    el Circuit Breaker pasa a THROTTLED o HALTED
+  kill_switch       alguien activa o desactiva el kill switch desde el panel / API
 
 Un fallo de red nunca detiene el bot: se registra en el log y send() devuelve False.
 
@@ -145,6 +146,17 @@ class Notifier:
                 f"Balance: {_fmt(account['balance'])} USD · Racha: {account['consecutive_losses']} · "
                 f"DD diario: {account['daily_drawdown_pct']:.2f}%")
         return self.send("status_changed", {"transition": transition, "account": account}, text)
+
+    def kill_switch(self, result: dict, account: dict, reason: str = "", source: str = "api") -> bool:
+        on = result["manual_halt"]
+        head = "🚨 KILL SWITCH ACTIVADO" if on else "▶️ KILL SWITCH DESACTIVADO"
+        tail = ("No se abrirán posiciones nuevas; las abiertas siguen con su SL/TP." if on else
+                f"El estado vuelve a las reglas del Circuit Breaker: {result['status_after']}.")
+        text = (f"{head}\n{result['status_before']} → {result['status_after']} (origen: {source})\n"
+                f"Motivo: {reason or 'sin motivo indicado'}\n{tail}\n"
+                f"Balance: {_fmt(account['balance'])} USD · Racha: {account['consecutive_losses']}")
+        return self.send("kill_switch", {"result": result, "account": account, "reason": reason,
+                                         "source": source}, text)
 
 
 if __name__ == "__main__":

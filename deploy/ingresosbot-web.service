@@ -1,0 +1,22 @@
+# systemd: panel web + API de control en 127.0.0.1:8050 (WEB_HOST / WEB_PORT en .env).
+# Queda detrás del proxy inverso de OpenLiteSpeed (deploy/CYBERPANEL_SETUP.md); no abre puertos en firewalld.
+#   sudo systemctl enable --now ingresosbot-web
+#   journalctl -u ingresosbot-web -f
+[Unit]
+Description=Ingresosbot panel web y API de control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ingresosbot
+Group=ingresosbot
+WorkingDirectory=/opt/Ingresosbot
+ExecStart=/opt/Ingresosbot/.venv/bin/python web_server.py --env-file .env
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

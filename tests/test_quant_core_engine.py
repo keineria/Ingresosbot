@@ -77,6 +77,13 @@ class TestCircuitBreaker(unittest.TestCase):
         self.assertEqual(self.cb(daily_drawdown_pct=3.0)["status"], "HALTED")
         self.assertEqual(self.cb(cooldown_candles_remaining=4)["cooldown_candles_remaining"], 4)
 
+    def test_manual_kill_switch(self):
+        cb = self.cb(manual_halt=True)
+        self.assertEqual((cb["status"], cb["risk_pct"], cb["cooldown_candles_remaining"]), ("HALTED", 0.0, 0))
+        self.assertIn("kill switch manual activado", cb["reasons"])
+        r = q.run_engine({**HEALTHY, "manual_halt": True}, manual=manual())
+        self.assertEqual((r["decision"], r["order"]), ("HALTED", None))
+
     def test_halt_aborts_before_chart(self):
         # Ni siquiera hacen falta velas: la capa 1 aborta primero.
         r = q.run_engine({**HEALTHY, "consecutive_losses": 3}, candles=None, manual=None)
