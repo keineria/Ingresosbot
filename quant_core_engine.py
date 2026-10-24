@@ -19,6 +19,7 @@ Uso rápido:
   python quant_core_engine.py --csv BTCUSDT_1h.csv --balance 10000 --state account_state.json
   python quant_core_engine.py --json velas.json --balance 10000 --losses 2 --dd 1.1
   python quant_core_engine.py --manual manual_input.json --balance 10000
+  python quant_core_engine.py --fetch BTCUSDT --interval 1h --db data/trading_state.db   # velas públicas + estado SQLite
   python quant_core_engine.py --demo          # ejecuta los 3 escenarios de verificación
 
 Salida: tabla Markdown (resumen ejecutivo) + bloque JSON estricto para n8n / CCXT / Alpaca.
@@ -41,7 +42,7 @@ import numpy as np
 import pandas as pd
 
 ENGINE_NAME = "quant_core_engine"
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.1.0"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -72,6 +73,7 @@ class Params:
     be_atr_mult: float = 1.5
     be_fee_offset_pct: float = 0.2     # SL nuevo = Entry * (1 + 0.2%) en long
     max_allocation_pct: float = 85.0   # tope del capital por posición
+    max_leverage: float = 1.0          # 1.0 = Spot. En Futuros el tope escala a 85% × max_leverage
     price_tick: float = 0.01           # redondeo de precios ("al centavo")
     qty_step: float = 0.000001         # paso mínimo de cantidad del exchange
     min_notional_usd: float = 10.0     # por debajo de esto no se envía orden
@@ -464,6 +466,8 @@ def atr_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
         raise ValueError("side debe ser LONG o SHORT")
     if entry <= 0 or atr_value <= 0 or balance <= 0 or risk_pct <= 0:
         raise ValueError("entry, atr, balance y risk_pct deben ser > 0")
+    if p.max_leverage < 1.0:
+        raise ValueError("max_leverage debe ser >= 1.0 (1.0 = Spot)")
 
     d = 1 if side == "LONG" else -1
     sl_raw = entry - d * p.sl_atr_mult * atr_value
@@ -489,7 +493,7 @@ def atr_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
     sl_distance_pct = round(abs(entry - sl) / entry, 12)         # en fracción
     risk_usd_target = balance * risk_pct / 100.0
     size_by_risk = risk_usd_target / sl_distance_pct
-    size_cap = balance * p.max_allocation_pct / 100.0
+    size_cap = balance * p.max_allocation_pct / 100.0 * p.max_leverage
     capped = size_by_risk > size_cap
     size_usd = floor_to_step(min(size_cap, size_by_risk), 0.01)
     qty = floor_to_step(size_usd / entry, p.qty_step)
@@ -512,6 +516,8 @@ def atr_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
         "position_size_by_risk_usd": round(size_by_risk, 2),
         "position_cap_usd": round(size_cap, 2),
         "capped_by_max_allocation": bool(capped),
+        "max_leverage": p.max_leverage,
+        "margin_required_usd": round(notional / p.max_leverage, 2),
         "position_size_usd": round(notional, 2),
         "quantity": qty,
         "risk_usd_effective": round(risk_usd, 2),
@@ -649,7 +655,8 @@ def markdown_summary(r: dict) -> str:
             ("Capa 3 · Entrada / SL / TP", f"{rk['entry_price']:.2f} / {rk['stop_loss']:.2f} / {rk['take_profit']:.2f}"),
             ("Break-Even (trigger → nuevo SL)", f"{rk['break_even_trigger']:.2f} → {rk['break_even_new_sl']:.2f}"),
             ("Tamaño / Cantidad", f"{rk['position_size_usd']:.2f} USD / {rk['quantity']}"
-                                  + (" (tope 85%)" if rk["capped_by_max_allocation"] else "")),
+                                  + (f" (tope {rk['position_cap_usd']:.2f} USD, x{rk['max_leverage']:g})"
+                                     if rk["capped_by_max_allocation"] else "")),
             ("Riesgo efectivo / R:R", f"{rk['risk_usd_effective']:.2f} USD ({rk['risk_pct_effective']:.3f}%) / {rk['reward_risk_ratio']:.2f}"),
         ]
     else:
@@ -722,7 +729,11 @@ def _build_parser() -> argparse.ArgumentParser:
     src.add_argument("--csv", help="Archivo CSV OHLCV (TradingView/Binance)")
     src.add_argument("--json", help="Archivo JSON con velas")
     src.add_argument("--manual", help="Archivo JSON (o cadena JSON) con indicadores manuales")
+    src.add_argument("--fetch", metavar="SYMBOL", help="Descarga velas públicas sin API key (market_fetcher.py)")
     src.add_argument("--demo", action="store_true", help="Ejecuta los 3 escenarios de verificación")
+    ap.add_argument("--interval", default="1h", help="Temporalidad para --fetch")
+    ap.add_argument("--limit", type=int, default=1000, help="Velas a descargar con --fetch")
+    ap.add_argument("--db", help="Lee el estado de la cuenta de SQLite (state_manager.py)")
     ap.add_argument("--state", help="account_state.json (balance, consecutive_losses, daily_drawdown_pct, cooldown_candles_remaining)")
     ap.add_argument("--balance", type=float)
     ap.add_argument("--losses", type=int, help="consecutive_losses")
@@ -756,6 +767,11 @@ def main(argv: list[str] | None = None) -> int:
         p.allow_short = False
 
     account: dict[str, Any] = {}
+    if args.db:
+        from state_manager import StateManager
+        sm = StateManager(args.db)
+        account.update(sm.engine_account())
+        sm.close()
     if args.state:
         account.update(json.loads(Path(args.state).read_text(encoding="utf-8")))
     for key, val in (("balance", args.balance), ("consecutive_losses", args.losses),
@@ -770,11 +786,24 @@ def main(argv: list[str] | None = None) -> int:
         candles = load_csv(args.csv)
     elif args.json:
         candles = load_json_candles(args.json)
+    elif args.fetch:
+        from market_fetcher import FetchError, fetch_candles
+        try:
+            candles, info = fetch_candles(args.fetch, args.interval, args.limit, verbose=True)
+        except FetchError as exc:
+            print(json.dumps({"engine": ENGINE_NAME, "version": ENGINE_VERSION, "decision": "ERROR",
+                              "error": str(exc), "order": None}, ensure_ascii=False, indent=2))
+            return 2
+        print(f"[quant_core_engine] {info['candles']} velas desde {info['source']}", file=sys.stderr)
+        if args.symbol == "UNKNOWN":
+            args.symbol = args.fetch.upper()
+        if args.timeframe == "UNKNOWN":
+            args.timeframe = args.interval
     elif args.manual:
         manual = json.loads(Path(args.manual).read_text(encoding="utf-8")) if Path(args.manual).exists() \
             else json.loads(args.manual)
     else:
-        raise SystemExit("Indica una fuente: --csv, --json, --manual o --demo.")
+        raise SystemExit("Indica una fuente: --csv, --json, --manual, --fetch o --demo.")
     if candles is not None and args.drop_last:
         candles = candles.iloc[:-1].reset_index(drop=True)
 

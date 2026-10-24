@@ -156,6 +156,19 @@ class TestRiskGuardian(unittest.TestCase):
         self.assertTrue(r["capped_by_max_allocation"])
         self.assertEqual(r["position_size_usd"], 8500.0)
 
+    def test_leverage_reaches_exact_risk(self):
+        # SL a 1.28% (< 1.765%): en Spot el tope del 85% frena; con x2 se llega al 1.5% exacto.
+        spot = q.atr_risk_guardian("LONG", 72551.12, 580.25, 10000, 1.5, P)
+        fut = q.atr_risk_guardian("LONG", 72551.12, 580.25, 10000, 1.5, q.Params(max_leverage=2.0))
+        self.assertTrue(spot["capped_by_max_allocation"])
+        self.assertLess(spot["risk_pct_effective"], 1.5)
+        self.assertFalse(fut["capped_by_max_allocation"])
+        self.assertAlmostEqual(fut["risk_pct_effective"], 1.5, places=2)
+        self.assertEqual(fut["position_cap_usd"], 17000.0)
+        self.assertAlmostEqual(fut["margin_required_usd"], fut["position_size_usd"] / 2, places=2)
+        with self.assertRaises(ValueError):
+            q.atr_risk_guardian("LONG", 100, 1, 10000, 1.5, q.Params(max_leverage=0.5))
+
     def test_throttled_half_risk(self):
         r = q.atr_risk_guardian("LONG", 100.0, 2.0, 10000, 0.75, P)
         self.assertAlmostEqual(r["risk_usd_effective"], 75.0, places=2)
