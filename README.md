@@ -19,6 +19,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `state_manager.py` | Estado persistente en SQLite (`data/trading_state.db`): cuenta, posiciones abiertas, historial; Break-Even automático |
 | `market_fetcher.py` | Velas públicas sin API key: Binance → data-api.binance.vision → Bybit → CSV local (`data/candles/`) |
 | `backtester.py` | Backtest vela a vela con engine + state_manager, comisión 0.08% por orden |
+| `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
+| `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre y cambios del Circuit Breaker |
 
 ```bash
 pip install pandas numpy
@@ -51,9 +53,28 @@ python backtester.py --csv data/candles/BTCUSDT_1h.csv --params '{"max_leverage"
 # Estado guardado del bot
 python state_manager.py --db data/trading_state.db
 
+# Bot 24/7 en paper trading (una pasada de prueba con --once)
+cp .env.example .env            # rellena WEBHOOK_URL y/o TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
+python notifier.py --test       # comprueba que llegan las alertas
+python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --once
+python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 4h --log-file logs/bot.log
+
 # Pruebas
 python -m unittest discover -s tests -v
 ```
+
+### Bot 24/7 en un VPS
+
+1. `git clone` en `/opt/Ingresosbot`, `python3 -m venv .venv && .venv/bin/pip install pandas numpy`.
+2. Crea `.env` a partir de `.env.example`.
+3. Instala el servicio: `deploy/ingresosbot.service` (instrucciones dentro). systemd lo reinicia si se cae.
+
+Cómo se comporta:
+- **Una posición por par** y nunca más capital comprometido que `85% × max_leverage` del balance entre todos los pares: si la primera señal ya usa el tope, las demás se omiten (`SKIPPED`).
+- **Nunca opera con datos viejos**: si la última vela descargada no es la que acaba de cerrar (por ejemplo, sin red y con un CSV antiguo), el par queda en `STALE_DATA`.
+- **El enfriamiento cuenta velas, no pares**: con 3 pares, cada cierre de vela descuenta 1. Si el VPS estuvo apagado, al volver descuenta las velas perdidas.
+- **Precio de entrada** = precio en vivo al cerrar la vela; si no hay precio o se aleja más de 5% del cierre, se usa el cierre.
+- El estado vive en `data/trading_state.db`: reiniciar el bot no pierde posiciones ni rachas.
 
 Todos los umbrales se pueden cambiar sin tocar el código con `--params '{"slope_min_pct": 0.15, "allow_short": false}'`.
 

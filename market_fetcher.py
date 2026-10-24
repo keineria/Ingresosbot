@@ -156,6 +156,33 @@ def fetch_candles(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 10
     raise FetchError(f"Sin red y sin CSV local ({path}). Errores: {errors}")
 
 
+def fetch_price(symbol: str, sources: tuple[str, ...] = ("binance", "binance_vision", "bybit"),
+                get: Callable[[str], object] = _http_get_json) -> tuple[float, str]:
+    """Último precio público (sin API key). Devuelve (precio, fuente)."""
+    if not symbol.isalnum():
+        raise ValueError("symbol debe ir sin separadores, p. ej. BTCUSDT")
+    sym = urllib.parse.urlencode({"symbol": symbol.upper()})
+    errors: dict[str, str] = {}
+    for name in sources:
+        try:
+            if name in ("binance", "binance_vision"):
+                host = BINANCE_HOSTS[0] if name == "binance" else BINANCE_HOSTS[1]
+                data = get(f"{host}/api/v3/ticker/price?{sym}")
+                price = float(data["price"])
+            else:
+                data = get(f"{BYBIT_HOST}/v5/market/tickers?category=spot&{sym}")
+                if data.get("retCode") != 0:
+                    raise FetchError(f"Bybit: {data.get('retMsg')}")
+                price = float(data["result"]["list"][0]["lastPrice"])
+            if price > 0:
+                return price, name
+            errors[name] = f"precio inválido: {price}"
+        except (urllib.error.URLError, OSError, ValueError, KeyError, IndexError, TypeError, AttributeError,
+                FetchError) as exc:
+            errors[name] = f"{type(exc).__name__}: {exc}"
+    raise FetchError(f"No se pudo obtener el precio de {symbol}: {errors}")
+
+
 def save_csv(df: pd.DataFrame, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

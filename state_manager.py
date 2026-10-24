@@ -144,6 +144,18 @@ class StateManager:
     def close(self) -> None:
         self.conn.close()
 
+    def __enter__(self) -> "StateManager":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+
     # ── Cuenta ──────────────────────────────────────────────────────────────
     def account(self) -> dict:
         return dict(self.conn.execute("SELECT * FROM account_state WHERE id = 1").fetchone())
@@ -226,6 +238,17 @@ class StateManager:
                           (pos["breakeven_stop_price"], pos["id"]))
         self.conn.commit()
 
+    @staticmethod
+    def _be_event(pos: dict, price: float | None, at: Any) -> dict:
+        moved = dict(pos, stop_loss=pos["breakeven_stop_price"], is_at_breakeven=1)
+        return {"event": "BREAK_EVEN", "position_id": pos["id"], "new_stop_loss": pos["breakeven_stop_price"],
+                "price": price, "at": _ts(at), "position": moved}
+
+    def open_notional(self) -> float:
+        """Nocional comprometido en posiciones abiertas (a precio de entrada)."""
+        row = self.conn.execute("SELECT COALESCE(SUM(position_units * entry_price), 0) FROM open_positions").fetchone()
+        return float(row[0])
+
     def process_candle(self, symbol: str, bar_time: Any, o: float, h: float, l: float, c: float,
                        slippage_pct: float = 0.0) -> list[dict]:
         """Gestiona SL/TP/BE con una vela cerrada. El nuevo SL de BE rige desde la vela siguiente."""
@@ -240,8 +263,7 @@ class StateManager:
                 events.append({"event": "CLOSE", **self.close_position(pos["id"], price, reason, bar_time)})
             elif not pos["is_at_breakeven"] and break_even_touched(pos["side"], pos["breakeven_trigger"], h, l):
                 self._move_to_break_even(pos)
-                events.append({"event": "BREAK_EVEN", "position_id": pos["id"],
-                               "new_stop_loss": pos["breakeven_stop_price"], "at": _ts(bar_time)})
+                events.append(self._be_event(pos, None, bar_time))
         return events
 
     def update_price(self, symbol: str, price: float, at: Any = None) -> list[dict]:
@@ -255,8 +277,7 @@ class StateManager:
                 events.append({"event": "CLOSE", **self.close_position(pos["id"], hit[0], hit[1].replace("_GAP", ""), at)})
             elif not pos["is_at_breakeven"] and break_even_touched(pos["side"], pos["breakeven_trigger"], price, price):
                 self._move_to_break_even(pos)
-                events.append({"event": "BREAK_EVEN", "position_id": pos["id"],
-                               "new_stop_loss": pos["breakeven_stop_price"], "at": _ts(at)})
+                events.append(self._be_event(pos, price, at))
         return events
 
     def close_position(self, position_id: int, exit_price: float, reason: str, closed_at: Any) -> dict:

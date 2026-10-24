@@ -6,6 +6,8 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import market_fetcher as mf  # noqa: E402
 import quant_core_engine as q  # noqa: E402
@@ -36,6 +38,22 @@ class FakeBinance:
         return rows[-int(qs["limit"]):]
 
 
+class FakeBybit:
+    """Imita /v5/market/kline: de la más nueva a la más vieja, máx. 1000, filtra por `end`."""
+    def __init__(self, total, step=4 * H):
+        self.step = step
+        self.rows = [[str(START + k * step), "1", "2", "0.5", "1.5", "10", "15"] for k in range(total)]
+        self.calls, self.limits = [], []
+
+    def __call__(self, url):
+        self.calls.append(url)
+        qs = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+        limit = int(qs["limit"])
+        self.limits.append(limit)
+        rows = [r for r in self.rows if "end" not in qs or int(r[0]) <= int(qs["end"])]
+        return {"retCode": 0, "retMsg": "OK", "result": {"list": rows[-limit:][::-1]}}
+
+
 def offline(url):
     raise urllib.error.URLError("sin red")
 
@@ -58,6 +76,43 @@ class TestFetcher(unittest.TestCase):
         self.assertEqual(len(df), 2200)
         self.assertEqual(df.time.diff().dropna().nunique(), 1)          # sin huecos ni duplicados
         self.assertGreaterEqual(len(fake.calls), 3)
+
+    def test_binance_pagination_8760_in_batches_of_1000(self):
+        fake = FakeBinance(10000)
+        df, info = mf.fetch_candles("BTCUSDT", "1h", 8760, get=fake, now_ms=START + 10**13)
+        limits = [int(dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(u).query))["limit"]) for u in fake.calls]
+        self.assertEqual(info["source"], "binance")
+        self.assertEqual(len(df), 8760)
+        self.assertTrue(df.time.is_monotonic_increasing)
+        self.assertEqual(int(df.time.duplicated().sum()), 0)
+        self.assertEqual(df.time.diff().dropna().unique().tolist(), [pd.Timedelta(hours=1)])
+        self.assertEqual(df.time.iloc[-1], pd.Timestamp(fake.rows[-1][0], unit="ms", tz="UTC"))
+        self.assertLessEqual(max(limits), 1000)
+        self.assertEqual(len(fake.calls), 9)                      # 8761 pedidas / 1000 por lote
+
+    def test_bybit_pagination_8760_in_batches_of_1000(self):
+        fake = FakeBybit(10000)
+        df, info = mf.fetch_candles("SOLUSDT", "4h", 8760, get=fake, sources=("bybit",), now_ms=START + 10**14)
+        self.assertEqual(info["source"], "bybit")
+        self.assertEqual(len(df), 8760)
+        self.assertTrue(df.time.is_monotonic_increasing)
+        self.assertEqual(int(df.time.duplicated().sum()), 0)
+        self.assertEqual(df.time.diff().dropna().unique().tolist(), [pd.Timedelta(hours=4)])
+        self.assertLessEqual(max(fake.limits), 1000)
+        self.assertEqual(len(fake.calls), 9)
+
+    def test_fetch_price_fallback(self):
+        def get(url):
+            if "api.binance.com" in url:
+                raise urllib.error.URLError("bloqueado")
+            if "binance.vision" in url:
+                return {"symbol": "BTCUSDT", "price": "67123.45000000"}
+            raise AssertionError("no debería llegar a Bybit")
+        self.assertEqual(mf.fetch_price("BTCUSDT", get=get), (67123.45, "binance_vision"))
+        bybit = lambda url: {"retCode": 0, "result": {"list": [{"lastPrice": "150.5"}]}}  # noqa: E731
+        self.assertEqual(mf.fetch_price("SOLUSDT", sources=("bybit",), get=bybit), (150.5, "bybit"))
+        with self.assertRaises(mf.FetchError):
+            mf.fetch_price("BTCUSDT", get=offline)
 
     def test_falls_back_to_mirror_then_bybit(self):
         def mirror_only(url):
