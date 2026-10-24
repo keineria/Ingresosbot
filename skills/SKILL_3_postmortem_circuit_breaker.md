@@ -52,9 +52,13 @@ Se ejecuta al cerrar cada operación:
 
 | Resultado del trade | Acción sobre `consecutive_losses` |
 |---|---|
-| PnL < 0 (pérdida) | `+1` |
-| PnL > 0 (ganancia) | reinicia a `0` |
-| PnL = 0 (scratch) | sin cambio |
+| `LOSS`: PnL < 0 | `+1` |
+| `WIN`: PnL > 0 | reinicia a `0` |
+| `BREAKEVEN`: cerrado por el stop de Break-Even (o PnL = 0) | sin cambio: ni suma pérdida ni reinicia la racha |
+
+El resultado `BREAKEVEN` se decide por el motivo de salida, no por el signo del PnL: tras comisiones y deslizamiento puede quedar en unos centavos a favor o en contra, pero el trade cumplió su función de proteger el capital. El balance sí recoge el PnL real.
+
+Implementación persistente: `state_manager.py` (SQLite, `data/trading_state.db`) guarda este estado en la tabla `account_state` y cada cierre en `trade_history`.
 
 Después:
 ```

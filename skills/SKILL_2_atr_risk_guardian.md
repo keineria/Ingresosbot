@@ -63,7 +63,7 @@ Para activos con precio < 1 USD, ajustar `price_tick` al tick real del par (p. e
 ```
 SL_Distance_Frac   = |Entry_Price − Stop_Loss| / Entry_Price        (con el SL ya redondeado)
 Size_por_riesgo    = Risk_USD_objetivo / SL_Distance_Frac
-Size_tope          = Balance · 0.85                                  ← tope del 85% del capital
+Size_tope          = Balance · 0.85 · max_leverage                   ← tope del 85% del capital (× apalancamiento)
 Position_Size_USD  = min(Size_tope, Size_por_riesgo)                 (redondeo hacia abajo al centavo)
 Quantity           = floor(Position_Size_USD / Entry_Price, qty_step)
 Risk_USD_efectivo  = Quantity · |Entry_Price − Stop_Loss|
@@ -74,6 +74,15 @@ Risk_USD_efectivo  = Quantity · |Entry_Price − Stop_Loss|
 - Riesgo 0.75% → tope activo si el SL está a menos de **0.882%**.
 
 Cuando el tope actúa, el riesgo real es **menor** que el objetivo (`capped_by_max_allocation = true`). Nunca es mayor.
+
+**Apalancamiento (`max_leverage`).** Por defecto `1.0` (Spot): el tope es exactamente el 85% del balance. En Futuros, `--params '{"max_leverage": 2.0}'` sube el tope a `0.85 · 2 = 170%` del balance, de modo que con SL entre 0.88% y 1.765% el tamaño ya no se recorta y el riesgo llega al 1.5% exacto. El riesgo por trade **no** cambia: el apalancamiento solo deja alcanzar el riesgo objetivo, nunca superarlo. El margen que bloquea la posición sale en `margin_required_usd = Position_Size_USD / max_leverage`. Valores < 1.0 se rechazan.
+
+| Ejemplo (Balance 10 000, riesgo 1.5%, SL a 1.28%) | Spot (x1) | Futuros (x2) |
+|---|---|---|
+| Tope | 8 500.00 USD | 17 000.00 USD |
+| Tamaño | 8 499.94 USD | 11 721.94 USD |
+| Riesgo efectivo | 1.088% | 1.500% |
+| Margen usado | 8 499.94 USD | 5 860.97 USD |
 
 **Orden mínima.** Si `Position_Size_USD < min_notional_usd` (10 USD por defecto), no se envía orden y la decisión pasa a `WAIT / NO_TRADE`.
 
@@ -105,6 +114,7 @@ Entrada 100.00, ATR 2.00, Balance 10 000 USD, ACTIVE:
 | `be_atr_mult` | 1.5 | Multiplicador ATR del disparo de Break-Even |
 | `be_fee_offset_pct` | 0.2 | Colchón de comisión del nuevo SL |
 | `max_allocation_pct` | 85 | Tope de capital por posición |
+| `max_leverage` | 1.0 | Multiplicador del tope (1.0 = Spot; 2.0 = Futuros x2) |
 | `price_tick` | 0.01 | Tick de precio |
 | `qty_step` | 0.000001 | Paso mínimo de cantidad |
 | `min_notional_usd` | 10 | Orden mínima |

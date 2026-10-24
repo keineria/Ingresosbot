@@ -12,14 +12,14 @@
 | ATR14 / Extensión | 580.25 / +0.79 ATR |
 | Capa 3 · Entrada / SL / TP | 72551.12 / 71622.73 / 74640.00 |
 | Break-Even (trigger → nuevo SL) | 73421.50 → 72696.23 |
-| Tamaño / Cantidad | 8499.94 USD / 0.117158 (tope 85%) |
+| Tamaño / Cantidad | 8499.94 USD / 0.117158 (tope 8500.00 USD, x1) |
 | Riesgo efectivo / R:R | 108.77 USD (1.088%) / 2.25 |
 
 ```json
 {
   "engine": "quant_core_engine",
-  "version": "1.0.0",
-  "generated_at_utc": "2026-10-24T02:54:54+00:00",
+  "version": "1.1.0",
+  "generated_at_utc": "2026-10-24T18:10:19+00:00",
   "symbol": "BTC/USDT",
   "timeframe": "1h",
   "candle_time": "2026-01-21T19:00:00+00:00",
@@ -84,6 +84,8 @@
     "position_size_by_risk_usd": 11722.03,
     "position_cap_usd": 8500.0,
     "capped_by_max_allocation": true,
+    "max_leverage": 1.0,
+    "margin_required_usd": 8499.94,
     "position_size_usd": 8499.94,
     "quantity": 0.117158,
     "risk_usd_effective": 108.77,
@@ -135,8 +137,8 @@
 ```json
 {
   "engine": "quant_core_engine",
-  "version": "1.0.0",
-  "generated_at_utc": "2026-10-24T02:54:54+00:00",
+  "version": "1.1.0",
+  "generated_at_utc": "2026-10-24T18:10:19+00:00",
   "symbol": "BTC/USDT",
   "timeframe": "1h",
   "candle_time": "2026-01-21T19:00:00+00:00",
@@ -214,8 +216,8 @@
 ```json
 {
   "engine": "quant_core_engine",
-  "version": "1.0.0",
-  "generated_at_utc": "2026-10-24T02:54:54+00:00",
+  "version": "1.1.0",
+  "generated_at_utc": "2026-10-24T18:10:19+00:00",
   "symbol": "BTC/USDT",
   "timeframe": "1h",
   "candle_time": null,
