@@ -28,6 +28,9 @@ python quant_core_engine.py --csv velas.csv --balance 10000 --json-only
 
 # Pruebas
 python -m unittest discover -s tests -v
+
+# Backtest vela a vela con un CSV real (entrada en el open siguiente, comisiones, Break-Even, Circuit Breaker)
+python backtest.py --csv BTCUSDT_1h.csv --balance 10000 --fee 0.1 --slippage 0.02 --trades-out trades.csv
 ```
 
 Todos los umbrales se pueden cambiar sin tocar el código con `--params '{"slope_min_pct": 0.15, "allow_short": false}'`.
