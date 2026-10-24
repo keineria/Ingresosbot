@@ -3,8 +3,8 @@
 market_fetcher.py — Velas OHLCV públicas sin API key (solo urllib de la librería estándar).
 
 Orden de fuentes (la primera que responda gana):
-  1. Binance        https://api.binance.com/api/v3/klines
-  2. Binance mirror https://data-api.binance.vision/api/v3/klines   (solo datos públicos; útil si 1 está bloqueado)
+  1. Binance datos  https://data-api.binance.vision/api/v3/klines   (solo datos públicos; no lo bloquea el país del VPS)
+  2. Binance        https://api.binance.com/api/v3/klines           (responde HTTP 451 desde algunos países, p. ej. EE. UU.)
   3. Bybit V5       https://api.bybit.com/v5/market/kline
   4. CSV local      data/candles/{SYMBOL}_{interval}.csv  (o la ruta que pases en fallback_csv)
 
@@ -40,6 +40,7 @@ BYBIT_INTERVAL = {"1m": "1", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "2
                   "4h": "240", "6h": "360", "12h": "720", "1d": "D"}
 DEFAULT_CANDLE_DIR = Path("data/candles")
 USER_AGENT = "Ingresosbot-market-fetcher/1.0"
+DEFAULT_SOURCES = ("binance_vision", "binance", "bybit")
 
 
 class FetchError(RuntimeError):
@@ -125,7 +126,7 @@ def default_csv_path(symbol: str, interval: str, base: Path = DEFAULT_CANDLE_DIR
 
 
 def fetch_candles(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 1000,
-                  fallback_csv: str | Path | None = None, sources: tuple[str, ...] = ("binance", "binance_vision", "bybit"),
+                  fallback_csv: str | Path | None = None, sources: tuple[str, ...] = DEFAULT_SOURCES,
                   get: Callable[[str], object] = _http_get_json, now_ms: int | None = None,
                   verbose: bool = False) -> tuple[pd.DataFrame, dict]:
     """Devuelve (velas, info). info["source"] dice de dónde salieron y info["errors"] qué falló."""
@@ -156,7 +157,7 @@ def fetch_candles(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 10
     raise FetchError(f"Sin red y sin CSV local ({path}). Errores: {errors}")
 
 
-def fetch_price(symbol: str, sources: tuple[str, ...] = ("binance", "binance_vision", "bybit"),
+def fetch_price(symbol: str, sources: tuple[str, ...] = DEFAULT_SOURCES,
                 get: Callable[[str], object] = _http_get_json) -> tuple[float, str]:
     """Último precio público (sin API key). Devuelve (precio, fuente)."""
     if not symbol.isalnum():

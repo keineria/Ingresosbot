@@ -63,12 +63,12 @@ class TestFetcher(unittest.TestCase):
         fake = FakeBinance(300)
         now = START + 299 * H + 10          # la vela 299 sigue abierta
         df, info = mf.fetch_candles("BTCUSDT", "1h", 250, get=fake, now_ms=now)
-        self.assertEqual(info["source"], "binance")
+        self.assertEqual(info["source"], "binance_vision")
         self.assertEqual(len(df), 250)
         self.assertEqual(list(df.columns), ["time", "open", "high", "low", "close", "volume"])
         self.assertEqual(df.time.iloc[-1].isoformat(), "2026-01-13T10:00:00+00:00")   # vela 298
         self.assertTrue(df.time.is_monotonic_increasing)
-        self.assertIn("api.binance.com", fake.calls[0])
+        self.assertIn("data-api.binance.vision", fake.calls[0])
 
     def test_binance_pagination(self):
         fake = FakeBinance(2500)
@@ -81,7 +81,7 @@ class TestFetcher(unittest.TestCase):
         fake = FakeBinance(10000)
         df, info = mf.fetch_candles("BTCUSDT", "1h", 8760, get=fake, now_ms=START + 10**13)
         limits = [int(dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(u).query))["limit"]) for u in fake.calls]
-        self.assertEqual(info["source"], "binance")
+        self.assertEqual(info["source"], "binance_vision")
         self.assertEqual(len(df), 8760)
         self.assertTrue(df.time.is_monotonic_increasing)
         self.assertEqual(int(df.time.duplicated().sum()), 0)
@@ -103,25 +103,37 @@ class TestFetcher(unittest.TestCase):
 
     def test_fetch_price_fallback(self):
         def get(url):
-            if "api.binance.com" in url:
-                raise urllib.error.URLError("bloqueado")
             if "binance.vision" in url:
+                raise urllib.error.URLError("bloqueado")
+            if "api.binance.com" in url:
                 return {"symbol": "BTCUSDT", "price": "67123.45000000"}
             raise AssertionError("no debería llegar a Bybit")
-        self.assertEqual(mf.fetch_price("BTCUSDT", get=get), (67123.45, "binance_vision"))
+        self.assertEqual(mf.fetch_price("BTCUSDT", get=get), (67123.45, "binance"))
         bybit = lambda url: {"retCode": 0, "result": {"list": [{"lastPrice": "150.5"}]}}  # noqa: E731
         self.assertEqual(mf.fetch_price("SOLUSDT", sources=("bybit",), get=bybit), (150.5, "bybit"))
         with self.assertRaises(mf.FetchError):
             mf.fetch_price("BTCUSDT", get=offline)
 
-    def test_falls_back_to_mirror_then_bybit(self):
-        def mirror_only(url):
+    def test_data_api_first_never_touches_blocked_host(self):
+        fake = FakeBinance(300)
+
+        def get(url):
             if "api.binance.com" in url:
                 raise urllib.error.HTTPError(url, 451, "restricted location", None, None)
-            return FakeBinance(300)(url)
-        df, info = mf.fetch_candles("SOLUSDT", "1h", 100, get=mirror_only, now_ms=START + 10**12)
+            return fake(url)
+        df, info = mf.fetch_candles("SOLUSDT", "1h", 100, get=get, now_ms=START + 10**12)
         self.assertEqual(info["source"], "binance_vision")
-        self.assertIn("binance", info["errors"])
+        self.assertEqual(info["errors"], {})
+        self.assertTrue(all("data-api.binance.vision" in u for u in fake.calls))
+
+    def test_falls_back_to_binance_then_bybit(self):
+        def binance_only(url):
+            if "binance.vision" in url:
+                raise urllib.error.HTTPError(url, 451, "restricted location", None, None)
+            return FakeBinance(300)(url)
+        df, info = mf.fetch_candles("SOLUSDT", "1h", 100, get=binance_only, now_ms=START + 10**12)
+        self.assertEqual(info["source"], "binance")
+        self.assertIn("binance_vision", info["errors"])
 
         def bybit_only(url):
             if "bybit" not in url:
