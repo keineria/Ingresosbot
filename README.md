@@ -15,6 +15,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 
 **Varios bots con nombre propio** (`deploy/bots.json`): el panel muestra cada bot con su cuenta simulada y la ficha "Cómo opera". El tercero es **Tortuga 55**: ruptura del máximo de 55 días en velas diarias, sobre BTC, ETH, SOL, BNB, XRP y oro tokenizado (PAXG), con SL 3 ATR y trailing 5 ATR (`python bot_runner.py --bot tortuga`). Estrategias y activos alternativos probados (rotación, medias móviles, ETFs, oro, grid), cómo encender Tortuga 55 y el informe diario a GitHub (`daily_report.py`): [docs/ALTERNATIVAS.md](docs/ALTERNATIVAS.md). Laboratorio para repetirlo: `alt_lab.py`.
 
+**Panel con todos los bots en vivo**: `bot.commonbird.com` abre en *Todos los bots*, una tarjeta en vivo por estrategia (si el proceso está vivo, Capa 1, valor de la cuenta, posiciones con su precio actual, últimas operaciones, decisión de la última vela) y la curva comparada en %. Para añadir un cuarto bot basta con su ficha en `deploy/bots.json` y `systemctl enable --now ingresosbot-bot@ID`: [docs/PANEL_BOTS.md](docs/PANEL_BOTS.md).
+
 ## Módulos
 
 | Archivo | Qué hace |

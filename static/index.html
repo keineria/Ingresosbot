@@ -32,6 +32,9 @@
       --glow: 0 0 0 1px rgba(90, 216, 230, .28), 0 0 42px -6px rgba(59, 130, 246, .45);
       --chart-fill-top: rgba(90, 216, 230, .30);
       --chart-fill-bottom: rgba(90, 216, 230, 0);
+      /* Un color fijo por bot, en el orden de deploy/bots.json (paleta categórica validada para daltonismo). */
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+      --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
     }
     :root[data-theme="light"] {
       --bg: #f4f6fb;
@@ -56,6 +59,8 @@
       --glow: 0 0 0 1px rgba(79, 70, 229, .22), 0 14px 40px -14px rgba(79, 70, 229, .35);
       --chart-fill-top: rgba(79, 70, 229, .20);
       --chart-fill-bottom: rgba(79, 70, 229, 0);
+      --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+      --series-5: #e87ba4; --series-6: #008300; --series-7: #6250d6; --series-8: #e34948;
     }
 
     * { box-sizing: border-box; }
@@ -145,17 +150,7 @@
     @media (max-width: 640px) { .kpis { grid-template-columns: repeat(2, 1fr); } .conn { grid-column: span 2; } .conn-grid { grid-template-columns: 1fr; }
       .kpi.wide-sm { grid-column: span 2; } .hero-h h1 { font-size: 24px; } .kpi .val { font-size: 20px; } }
 
-    /* ── Selector de bots + ficha de estrategia ────────────────────────────── */
-    .bots { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 0 0 26px; }
-    @media (max-width: 640px) { .bots { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 74%; overflow-x: auto;
-      scroll-snap-type: x mandatory; padding-bottom: 6px; margin-bottom: 18px; } .bot { scroll-snap-align: start; } }
-    .bot { text-align: left; font: inherit; color: inherit; cursor: pointer; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-    .bot:hover { border-color: var(--line-strong); }
-    .bot[aria-pressed="true"] { box-shadow: var(--glow); background: var(--card-strong); }
-    .bot .bh { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14.5px; }
-    .bot .bh .pill { margin-left: auto; }
-    .bot .bm { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink-3); }
-    .bot .bv { font-size: 18px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    /* ── Ficha de estrategia ─────────────────────────────────────────────── */
     .strat { padding: 0; margin: 0 0 18px; }
     .strat summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 12px 16px; font-weight: 600; font-size: 13.5px; }
     .strat summary::-webkit-details-marker { display: none; }
@@ -290,6 +285,63 @@
     .sim-form .sw { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
     .sim-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); padding: 0 16px 10px; }
     .sim-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+
+    /* ── Navegación entre vistas: Todos los bots | un bot ──────────────── */
+    .views { border-top: 1px solid var(--line); }
+    .views .wrap { display: flex; gap: 4px; height: 46px; align-items: center; overflow-x: auto; scrollbar-width: none; }
+    .views .wrap::-webkit-scrollbar { display: none; }
+    .views button { display: inline-flex; align-items: center; gap: 8px; border: 1px solid transparent; background: none; height: 32px; padding: 0 12px;
+                    border-radius: 9px; cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13.5px; white-space: nowrap; }
+    .views button:hover { color: var(--ink); background: var(--inset); }
+    .views button[aria-current="true"] { color: var(--ink); background: var(--card-strong); border-color: var(--line-strong); }
+    .views .sw { width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--accent)); flex: none; }
+    .views .sw.off { background: transparent; box-shadow: inset 0 0 0 2px var(--c, var(--ink-3)); }
+    .views .ret { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    /* ── Vista "Todos los bots" ──────────────────────────────────────────── */
+    .ov-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .ov-kpis .kpi .val { font-size: 21px; }
+    @media (max-width: 900px) { .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .cmp { margin-top: 14px; }
+    .cmp .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 16px 0; font-size: 12.5px; color: var(--ink-2); }
+    .cmp .legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .cmp .legend i { width: 14px; height: 3px; border-radius: 2px; background: var(--c); }
+    .cmp .legend b { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 650; }
+    .cmp .chart-box svg { min-height: 230px; }
+    .ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin-top: 14px; align-items: start; }
+    @media (max-width: 400px) { .ov-grid { grid-template-columns: minmax(0, 1fr); } }
+    .live { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+    .live::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--c); border-radius: 16px 16px 0 0; }
+    .live .lh { display: flex; align-items: flex-start; gap: 10px; padding: 15px 16px 12px; }
+    .live .lh h3 { margin: 0; font-size: 16px; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+    .live .lh .sw { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+    .live .lh .meta { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+    .live .lh .pills { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+    .live .pill.run::before { animation: pulse 2s infinite; }
+    .live .lb { padding: 0 16px 6px; display: flex; flex-direction: column; gap: 12px; }
+    .live .eq { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; align-items: end; }
+    .live .eq .lbl { font-size: 12px; color: var(--ink-2); }
+    .live .eq .big { font-size: 26px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; white-space: nowrap; }
+    .live .eq .foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--ink-3); }
+    .live .eq svg { width: 100%; height: 46px; display: block; }
+    .live .box { background: var(--inset); border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
+    .live .box .kv { padding: 2.5px 0; font-size: 12.5px; }
+    .live .meter { margin: 3px 0 1px; }
+    .live .decs { display: flex; flex-wrap: wrap; gap: 6px; }
+    .live .dec { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 8px; border-radius: 8px; background: var(--inset); border: 1px solid var(--line); }
+    .live .dec b { font-weight: 650; }
+    .live .sh { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); margin-bottom: 6px; }
+    .live ul.mini { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .live ul.mini li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 10px; font-size: 12.5px; padding: 8px 10px; border-radius: 10px; background: var(--inset); border: 1px solid var(--line); }
+    .live ul.mini li .s { color: var(--ink-3); font-size: 11.5px; }
+    .live ul.mini li .r { text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; }
+    .live .none { font-size: 12.5px; color: var(--ink-3); padding: 2px 0; }
+    .live footer { margin-top: auto; padding: 12px 16px 14px; display: flex; align-items: center; gap: 10px; }
+    .live footer .sum { font-size: 12px; color: var(--ink-3); flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .add-bot { border-style: dashed; box-shadow: none; background: transparent; padding: 18px 18px 16px; font-size: 13px; color: var(--ink-2); }
+    .add-bot h3 { margin: 0 0 6px; font-size: 15px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+    .add-bot ol { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 5px; }
+    .add-bot code { background: var(--inset); border: 1px solid var(--line); padding: 1px 5px; border-radius: 5px; font-size: 12px; overflow-wrap: anywhere; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
   </style>
 </head>
@@ -326,15 +378,44 @@
     <span id="updated" class="faint hide-sm" style="font-size:12px"></span>
     <button id="btn-theme" class="btn icon" title="Cambiar tema claro / oscuro" aria-label="Cambiar tema"><svg class="i"><use href="#i-sun"/></svg></button>
     <button id="btn-refresh" class="btn icon" title="Refrescar" aria-label="Refrescar"><svg class="i"><use href="#i-refresh"/></svg></button>
-    <button id="btn-kill" class="btn danger"><svg class="i"><use href="#i-power"/></svg><span>Kill Switch</span></button>
+    <button id="btn-kill" class="btn danger hidden"><svg class="i"><use href="#i-power"/></svg><span>Kill Switch</span></button>
   </div>
+  <nav class="views" aria-label="Vistas"><div class="wrap" id="views"></div></nav>
 </header>
 
 <main class="wrap">
   <div id="error" class="err hidden"></div>
 
-  <!-- Bots: cada uno con su estrategia y su propia cuenta simulada -->
-  <section id="bots" class="bots hidden" aria-label="Bots"></section>
+
+  <!-- Todos los bots a la vez -->
+  <div id="overview">
+    <section>
+      <div class="hero-h">
+        <h1><span id="ov-dot" class="live-dot off"></span>Tus bots en vivo</h1>
+        <span id="ov-badge" class="pill s-mute">…</span>
+      </div>
+      <p class="hero-sub">Cada estrategia opera en paper con su propia cuenta simulada y sus propias reglas. Las tarjetas se mueven solas: precio, posiciones y decisiones de cada bot. <span id="ov-when" class="faint"></span></p>
+      <div class="ov-kpis">
+        <div class="card kpi"><div class="ico"><svg class="i"><use href="#i-plug"/></svg></div>
+          <div class="lbl">Bots funcionando</div><div id="o-run" class="val num">—</div><div class="foot" id="o-run-f"></div></div>
+        <div class="card kpi"><div class="ico"><svg class="i"><use href="#i-bolt"/></svg></div>
+          <div class="lbl">Posiciones abiertas</div><div id="o-pos" class="val num">—</div><div class="foot" id="o-pos-f"></div></div>
+        <div class="card kpi"><div class="ico"><svg class="i"><use href="#i-cal"/></svg></div>
+          <div class="lbl">Operaciones cerradas</div><div id="o-ops" class="val num">—</div><div class="foot" id="o-ops-f"></div></div>
+        <div class="card kpi"><div class="ico"><svg class="i"><use href="#i-trend"/></svg></div>
+          <div class="lbl">Va mejor</div><div id="o-best" class="val">—</div><div class="foot" id="o-best-f"></div></div>
+      </div>
+      <div class="card cmp">
+        <div class="card-h"><svg class="i"><use href="#i-trend"/></svg>Rendimiento comparado<span class="right faint" style="font-size:12px">% sobre el capital inicial de cada bot</span></div>
+        <div class="legend" id="cmp-legend"></div>
+        <div class="chart-box" id="cmp-box"><svg id="cmp-chart" role="img" aria-label="Rendimiento de cada bot en el tiempo"></svg><div id="cmp-tip" class="tip hidden"></div></div>
+      </div>
+    </section>
+    <div id="ov-grid" class="ov-grid" aria-label="Bots"></div>
+  </div>
+
+  <!-- Un bot en detalle -->
+  <div id="detail" class="hidden">
 
   <!-- En vivo + KPIs -->
   <section>
@@ -342,6 +423,7 @@
       <h1><span id="live-dot" class="live-dot off"></span><span id="bot-title">En vivo</span></h1>
       <span id="status-badge" class="pill s-mute">…</span>
       <span id="manual-badge" class="pill s-bad hidden">KILL SWITCH ACTIVO</span>
+      <span id="health-badge" class="pill hidden"></span>
     </div>
     <p class="hero-sub">Rendimiento en tiempo real del bot en modo paper. Última vela procesada: <span id="last-tick" class="num">—</span></p>
     <details id="strat" class="card strat hidden" open>
@@ -353,7 +435,7 @@
       <div class="card conn">
         <h3>Conexión</h3>
         <div class="conn-grid">
-          <div class="kv"><span>Datos</span><span>Binance Vision</span></div>
+          <div class="kv"><span>Datos</span><span>Binance</span></div>
           <div class="kv"><span>Modo</span><span>Paper (simulado)</span></div>
           <div class="kv"><span>Temporalidad</span><span id="c-tf">—</span></div>
           <div class="kv"><span>Pares</span><span id="c-syms">—</span></div>
@@ -492,6 +574,8 @@
     </div>
   </div>
 
+  </div>
+
   <p class="foot-note">Se actualiza solo cada 15 s · Las acciones requieren la clave de acceso · Horas en tu zona local, periodos (hoy, semana, mes) en UTC</p>
 </main>
 
@@ -523,11 +607,14 @@
                   set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} } };
   let KEY = store.get(STORE) || '';
   let state = null, scan = null, symbol = store.get(SYM) || '', bots = null, botId = store.get(BOT) || '';
+  let overview = null;
+  // Vista: 'all' (todos los bots) o el id de un bot. Va en la URL (#tortuga) para poder compartir el enlace.
+  let view = decodeURIComponent(location.hash.slice(1)) || store.get('ingresosbot.view') || 'all';
   const withBot = (path) => botId ? path + (path.includes('?') ? '&' : '?') + 'bot=' + encodeURIComponent(botId) : path;
 
   // La clave puede venir una vez por ?key= (se guarda y se quita de la URL).
   const urlKey = new URLSearchParams(location.search).get('key');
-  if (urlKey) { KEY = urlKey; store.set(STORE, KEY); history.replaceState(null, '', location.pathname); }
+  if (urlKey) { KEY = urlKey; store.set(STORE, KEY); history.replaceState(null, '', location.pathname + location.hash); }
 
   // ── Tema ──
   function applyTheme(t) {
@@ -537,7 +624,7 @@
   applyTheme(store.get(THEME) || 'dark');
   $('btn-theme').addEventListener('click', () => {
     const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    store.set(THEME, t); applyTheme(t); if (state) { drawChart(); drawWires(); } drawSim();
+    store.set(THEME, t); applyTheme(t); if (state) { drawChart(); drawWires(); } drawSim(); drawCompare();
   });
 
   // ── Formato ──
@@ -611,9 +698,14 @@
     if (s.last_scan && (!scan || s.last_scan.scanned_at >= scan.scanned_at)) scan = s.last_scan;
     const a = s.account, m = s.metrics, x = s.exposure, c = s.config, per = s.periods || {};
     const st = STATUS[a.status] || [a.status, 's-mute'];
-    const b = $('status-badge'); b.className = 'pill ' + st[1]; b.textContent = 'Bot ' + st[0].toLowerCase(); b.title = a.status;
+    const b = $('status-badge'); b.className = 'pill ' + st[1]; b.textContent = 'Capa 1 · ' + st[0].toLowerCase(); b.title = a.status;
     $('manual-badge').classList.toggle('hidden', !a.manual_halt);
-    $('live-dot').className = 'live-dot' + (a.status === 'ACTIVE' || a.status === 'THROTTLED' ? '' : ' off');
+    // El estado de la Capa 1 no dice si el proceso corre: eso lo da el latido (vista de todos los bots).
+    const ov = (bots || []).find((x) => x.id === bt.id), health = ov && ov.runner ? ov.runner.health : null;
+    const hb = $('health-badge'), hl = HEALTH[health];
+    hb.classList.toggle('hidden', !hl || health === 'running');
+    if (hl) { hb.className = 'pill ' + hl[1] + (health === 'running' ? ' hidden' : ''); hb.textContent = 'Proceso: ' + hl[0].toLowerCase(); }
+    $('live-dot').className = 'live-dot' + ((a.status === 'ACTIVE' || a.status === 'THROTTLED') && (!health || health === 'running') ? '' : ' off');
     const kill = $('btn-kill');
     kill.className = 'btn ' + (a.manual_halt ? 'resume' : 'danger');
     kill.querySelector('span').textContent = a.manual_halt ? 'Reactivar' : 'Kill Switch';
@@ -1045,40 +1137,253 @@
     if (b.dataset.tab === 'sim') drawSim();
   });
 
-  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawWires(); drawChart(); drawSim(); }, 120); });
+  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawWires(); drawChart(); drawSim(); drawCompare(); }, 120); });
 
-  // ── Bots ──
-  function renderBots() {
-    const el = $('bots');
-    el.classList.toggle('hidden', !bots || bots.length < 2);
-    if (!bots || bots.length < 2) return;
-    el.innerHTML = bots.map((b) => {
-      const st = b.error ? ['Error', 's-bad'] : !b.last_cycle_at ? ['Sin arrancar', 's-mute']
-        : b.manual_halt ? ['Kill switch', 's-bad'] : (STATUS[b.status] || [b.status, 's-mute']);
-      const syms = (b.symbols || []).map((x) => x.replace(/USDT$/, '')).join(' · ');
-      return `<button type="button" class="card bot" data-bot="${esc(b.id)}" aria-pressed="${b.id === botId}">
-        <span class="bh">${esc(b.name)}${pill(st[0], st[1])}</span>
-        <span class="bm"><span class="bv ${tone(b.return_pct)}">${nil(b.return_pct) ? '—' : signed(b.return_pct) + '%'}</span>
-          <span>${nil(b.balance) ? '' : esc(usd(b.balance))}</span></span>
-        <span class="bm"><span>${esc(b.interval || '')} · ${esc(syms)}</span><span>${nil(b.trades) ? '' : b.trades + ' ops'}</span></span></button>`;
-    }).join('');
-    const sel = el.querySelector('[aria-pressed="true"]');
-    if (sel && el.scrollWidth > el.clientWidth) el.scrollLeft = sel.offsetLeft - el.offsetLeft;
+  // ── Bots: color fijo por bot (orden de bots.json o "color" en su ficha) ──
+  const color = (b) => {
+    const i = bots ? bots.findIndex((x) => x.id === b.id) : 0;
+    const slot = Number.isInteger(b.color) && b.color >= 1 && b.color <= 8 ? b.color : (i % 8) + 1;
+    return `var(--series-${slot})`;
+  };
+  const HEALTH = { running: ['Funcionando', 's-good run'], stopped: ['Apagado', 's-bad'], never: ['Sin encender', 's-mute'],
+                   stale: ['Sin señal', 's-warn'] };
+  const healthOf = (b) => b.error ? ['Error', 's-bad'] : (HEALTH[b.runner && b.runner.health] || ['—', 's-mute']);
+  const l1Of = (b) => !b.account ? null : b.account.manual_halt ? ['Kill switch', 's-bad'] : (STATUS[b.account.status] || [b.account.status, 's-mute']);
+  const short = (sym) => String(sym).replace(/USDT$/, '');
+  const dur = (sec) => {
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 60) return sec + ' s';
+    if (sec < 3600) return Math.round(sec / 60) + ' min';
+    if (sec < 86400) { const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h + ' h' + (m ? ' ' + m + ' min' : ''); }
+    const d = Math.floor(sec / 86400), h = Math.round((sec % 86400) / 3600); return d + (d === 1 ? ' día' : ' días') + (h ? ' ' + h + ' h' : '');
+  };
+  // Contadores que se mueven cada segundo sin pedir nada al servidor.
+  const since = (iso) => iso ? `<span data-since="${esc(iso)}">hace ${dur((Date.now() - new Date(iso)) / 1000)}</span>` : '—';
+  const until = (iso) => iso ? `<span data-until="${esc(iso)}">en ${dur((new Date(iso) - Date.now()) / 1000)}</span>` : '—';
+  setInterval(() => {
+    document.querySelectorAll('[data-since]').forEach((el) => { el.textContent = 'hace ' + dur((Date.now() - new Date(el.dataset.since)) / 1000); });
+    document.querySelectorAll('[data-until]').forEach((el) => {
+      const left = (new Date(el.dataset.until) - Date.now()) / 1000;
+      el.textContent = left > 0 ? 'en ' + dur(left) : 'procesando…';
+    });
+  }, 1000);
+
+  function renderViews() {
+    const list = bots || [];
+    $('views').innerHTML = `<button type="button" data-view="all" aria-current="${view === 'all'}">Todos los bots</button>` +
+      list.map((b) => {
+        const h = b.runner && b.runner.health;
+        return `<button type="button" data-view="${esc(b.id)}" aria-current="${view === b.id}" style="--c:${color(b)}">
+          <span class="sw${h === 'running' ? '' : ' off'}"></span>${esc(b.name)}
+          <span class="ret ${tone(b.return_pct)}">${nil(b.return_pct) ? '' : signed(b.return_pct, 1) + '%'}</span></button>`;
+      }).join('');
   }
-  if (window.matchMedia('(max-width: 640px)').matches) $('strat').open = false;   // en el móvil, plegada
-  $('bots').addEventListener('click', (ev) => {
-    const b = ev.target.closest('button[data-bot]'); if (!b || b.dataset.bot === botId) return;
-    botId = b.dataset.bot; store.set(BOT, botId); scan = null; state = null; renderBots(); refresh();
+  $('views').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-view]'); if (!b) return;
+    setView(b.dataset.view);
   });
+  function setView(v) {
+    if (v === view) return;
+    view = v; store.set('ingresosbot.view', v);
+    history.replaceState(null, '', v === 'all' ? location.pathname : '#' + encodeURIComponent(v));
+    if (v !== 'all') { botId = v; store.set(BOT, v); scan = null; state = null; }
+    applyView(); renderViews(); window.scrollTo({ top: 0 }); refresh();
+  }
+  function applyView() {
+    const all = view === 'all';
+    $('overview').classList.toggle('hidden', !all);
+    $('detail').classList.toggle('hidden', all);
+    $('btn-kill').classList.toggle('hidden', all);
+    if (all) document.title = 'Todos los bots · Ingresosbot';
+  }
+  window.addEventListener('hashchange', () => setView(decodeURIComponent(location.hash.slice(1)) || 'all'));
+
+  // ── Vista "Todos los bots" ──
+  function renderOverview() {
+    const list = (overview && overview.bots) || [];
+    const ok = list.filter((b) => !b.error);
+    const running = ok.filter((b) => b.runner.health === 'running');
+    const all = list.length && running.length === list.length;
+    $('ov-dot').className = 'live-dot' + (running.length ? '' : ' off');
+    $('ov-badge').className = 'pill ' + (all ? 's-good' : running.length ? 's-warn' : 's-bad');
+    $('ov-badge').textContent = all ? 'Todos funcionando' : running.length + ' de ' + list.length + ' funcionando';
+    $('ov-when').textContent = '';
+    $('updated').textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-CO');
+
+    // KPIs de conjunto (sin sumar capitales distintos: cada bot tiene su propio inicial).
+    $('o-run').textContent = running.length + ' de ' + list.length;
+    const off = list.filter((b) => !running.includes(b));
+    $('o-run-f').innerHTML = off.length ? esc(off.map((b) => b.name + ': ' + healthOf(b)[0].toLowerCase()).join(' · ')) : 'todos con latido reciente';
+    const npos = ok.reduce((n, b) => n + b.open_positions.length, 0);
+    const unreal = ok.reduce((n, b) => n + (b.unrealized_pnl_usd || 0), 0);
+    $('o-pos').textContent = npos;
+    $('o-pos-f').innerHTML = npos ? `<span class="${tone(unreal)}">${signed(unreal)} $</span> sin cerrar` : 'esperando señales de entrada';
+    const nops = ok.reduce((n, b) => n + (b.metrics.trades || 0), 0), today = ok.reduce((n, b) => n + (b.today ? b.today.trades : 0), 0);
+    $('o-ops').textContent = nops;
+    $('o-ops-f').textContent = 'hoy ' + today + ' · entre todos los bots';
+    const best = ok.filter((b) => !nil(b.return_pct)).sort((a, b) => b.return_pct - a.return_pct)[0];
+    $('o-best').innerHTML = best ? esc(best.name) : '—';
+    $('o-best-f').innerHTML = best ? chip(best.return_pct) + '<span>valor de la cuenta vs. su inicial</span>' : '';
+
+    $('ov-grid').innerHTML = list.map(liveCard).join('') + addBotCard();
+    drawCompare();
+  }
+
+  function liveCard(b) {
+    const c = color(b), h = healthOf(b);
+    const syms = (b.symbols || []).map(short).join(' · ');
+    const head = `<header class="lh"><div style="min-width:0"><h3><span class="sw"></span>${esc(b.name)}</h3>
+        <div class="meta">${esc(b.interval || '')}${syms ? ' · ' + esc(syms) : ''}</div></div>
+        <div class="pills">${pill(h[0], h[1])}${b.account ? pill('Capa 1 · ' + l1Of(b)[0], l1Of(b)[1], true) : ''}</div></header>`;
+    const foot = `<footer><span class="sum">${esc(b.summary || '')}</span>
+        <button type="button" class="btn sm" data-view="${esc(b.id)}">Ver detalle</button></footer>`;
+    if (b.error) return `<article class="card live" style="--c:${c}">${head}<div class="lb"><div class="note bad">${esc(b.error)}</div></div>${foot}</article>`;
+
+    const a = b.account, r = b.runner, lim = b.limits || {};
+    const curve = [a.initial_balance, ...(b.balance_curve || []).map((p) => p.balance), b.equity];
+    const ddMax = lim.halt_dd_pct || 3, ddPct = Math.min(100, a.daily_drawdown_pct / ddMax * 100);
+    const nL = lim.halt_losses || 3;
+    const decs = Object.entries(r.decisions || {});
+    const decHtml = decs.length ? `<div class="decs">${decs.map(([sym, d]) => {
+        const lab = DECISION[d.decision] || [d.decision === 'SKIPPED' ? 'Omitida' : (d.decision || '—'), ''];
+        const why = d.error || d.reason || (d.blocking || []).join(' · ');
+        return `<span class="dec" title="${esc(why)}">${esc(short(sym))} <b class="${lab[1]}">${esc(lab[0])}</b></span>`;
+      }).join('')}</div>` : `<div class="none">Aún no ha cerrado ninguna vela${r.health === 'never' ? ': el servicio no se ha encendido' : ''}.</div>`;
+
+    const pos = b.open_positions;
+    const posHtml = pos.length ? `<ul class="mini">${pos.map((p) => {
+        const prot = p.is_at_breakeven ? 'en Break-Even' : p.trail_atr_mult && p.stop_loss !== p.initial_stop_loss ? 'trailing activo' : 'SL inicial';
+        return `<li><span><b>${esc(short(p.symbol))}</b> <span class="${p.side === 'LONG' ? 'good' : 'bad'}">${esc(p.side)}</span>
+            <span class="faint">· ${px(p.entry_price)} → ${px(p.current_price)}</span></span>
+          <span class="r ${tone(p.unrealized_pnl_usd)}">${signed(p.unrealized_pnl_usd)} $</span>
+          <span class="s">SL ${px(p.stop_loss)} · ${prot} · abierta ${since(p.opened_at)}</span>
+          <span class="s r ${tone(p.unrealized_pct)}">${nil(p.unrealized_pct) ? '' : signed(p.unrealized_pct) + '%'}</span></li>`;
+      }).join('')}</ul>` : '<div class="none">Sin posiciones: esperando que las 3 capas den luz verde.</div>';
+
+    const tr = b.recent_trades.slice(0, 3);
+    const trHtml = tr.length ? `<ul class="mini">${tr.map((t) => {
+        const res = RESULT[t.result] || [t.result, 's-mute'];
+        return `<li><span><b>${esc(short(t.symbol))}</b> ${pill(res[0], res[1], true)}</span>
+          <span class="r ${tone(t.pnl_usd)}">${signed(t.pnl_usd)} $</span>
+          <span class="s">${esc(localTime(t.closed_at))} · ${esc(t.exit_reason)}</span>
+          <span class="s r">${t.r_multiple === null ? '' : signed(t.r_multiple) + ' R'}</span></li>`;
+      }).join('')}</ul>` : '<div class="none">Todavía no ha cerrado operaciones.</div>';
+
+    return `<article class="card live" style="--c:${c}">${head}<div class="lb">
+      <div class="eq"><div><div class="lbl">Valor de la cuenta</div><div class="big num">${usd(b.equity)}</div></div>
+        <div>${curve.length > 2 ? sparkColor(curve, c) : ''}</div>
+        <div class="foot">${chip(b.return_pct)}<span>inicial ${esc(usd(a.initial_balance))}</span>
+          ${b.unrealized_pnl_usd ? `<span>· ${signed(b.unrealized_pnl_usd)} $ sin cerrar</span>` : ''}
+          <span>· ${b.metrics.trades || 0} ${b.metrics.trades === 1 ? 'op' : 'ops'}${nil(b.metrics.win_rate_pct) ? '' : ' · gana ' + fmt(b.metrics.win_rate_pct, 0) + '%'}</span></div></div>
+      <div class="box">
+        <div class="kv"><span>Pérdidas seguidas</span><span>${a.consecutive_losses} / ${nL} <span class="dots">${Array.from({ length: nL }, (_, i) => `<i class="${i < a.consecutive_losses ? 'on' : ''}"></i>`).join('')}</span></span></div>
+        <div class="kv"><span>Drawdown de hoy</span><span>${fmt(a.daily_drawdown_pct)}% / ${fmt(ddMax, 0)}%</span></div>
+        <div class="meter"><div style="width:${ddPct}%;background:${ddPct >= 100 ? 'var(--bad)' : ddPct >= 66 ? 'var(--warn)' : 'var(--good)'}"></div></div>
+        ${a.cooldown_bars_remaining > 0 ? `<div class="kv"><span>Enfriamiento</span><span class="warn">${a.cooldown_bars_remaining} velas</span></div>` : ''}
+      </div>
+      <div class="box">
+        <div class="kv"><span>Última vela</span><span>${r.last_cycle_at ? since(r.last_cycle_at) : 'ninguna'}</span></div>
+        <div class="kv"><span>Próxima vela (${esc(b.interval)})</span><span>${until(r.next_bar_close)}</span></div>
+        <div class="kv"><span>Latido del proceso</span><span class="${r.health === 'running' ? '' : 'warn'}">${r.heartbeat_at ? since(r.heartbeat_at) : (r.service_state ? 'systemd: ' + esc(r.service_state) : '—')}</span></div>
+      </div>
+      <div><div class="sh"><span>Qué decidió en la última vela</span></div>${decHtml}</div>
+      <div><div class="sh"><span>Posiciones abiertas (${pos.length})</span></div>${posHtml}</div>
+      <div><div class="sh"><span>Últimas operaciones</span><span>${b.today && b.today.trades ? 'hoy ' + signed(b.today.pnl_usd) + ' $' : ''}</span></div>${trHtml}</div>
+      </div>${foot}</article>`;
+  }
+
+  function addBotCard() {
+    return `<div class="card add-bot"><h3><svg class="i"><use href="#i-plug"/></svg>¿Una estrategia más?</h3>
+      Cada bot nuevo aparece aquí solo, sin reiniciar el panel:
+      <ol><li>Añade su ficha (nombre, base, pares, temporalidad y parámetros) en <code>deploy/bots.json</code>.</li>
+      <li>Enciéndelo en el VPS: <code>systemctl enable --now ingresosbot-bot@ID</code>, cambiando ID por el de su ficha.</li></ol>
+      <div class="note">Pasos completos en docs/PANEL_BOTS.md.</div></div>`;
+  }
+
+  $('ov-grid').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-view]'); if (b) setView(b.dataset.view);
+  });
+
+  function sparkColor(vals, c) {
+    const w = 200, h = 46, min = Math.min(...vals), max = Math.max(...vals), rng = max - min || 1;
+    const pts = vals.map((v, i) => [i / (vals.length - 1) * w, 5 + (1 - (v - min) / rng) * (h - 10)]);
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+    const base = 5 + (1 - (vals[0] - min) / rng) * (h - 10);
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="0" x2="${w}" y1="${base}" y2="${base}" stroke="var(--line-strong)" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>
+      <path d="${d}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+  }
+
+  // ── Rendimiento comparado: % de cada bot sobre su propio capital inicial, en el tiempo ──
+  function drawCompare() {
+    const svg = $('cmp-chart'), box = $('cmp-box'), tip = $('cmp-tip');
+    if (!overview || $('overview').classList.contains('hidden')) return;
+    const now = Date.now();
+    const series = overview.bots.filter((b) => !b.error && b.account && b.account.initial_balance).map((b) => {
+      const init = b.account.initial_balance, pct = (v) => (v / init - 1) * 100;
+      const pts = [];
+      const start = b.started_at || (b.balance_curve[0] && b.balance_curve[0].t);
+      if (start) pts.push({ t: new Date(start).getTime(), v: 0 });
+      for (const p of b.balance_curve) pts.push({ t: new Date(p.t).getTime(), v: pct(p.balance) });
+      pts.push({ t: now, v: b.return_pct || 0, live: true });
+      return { b, c: color(b), pts };
+    });
+    $('cmp-legend').innerHTML = series.map((x) => `<span style="--c:${x.c}"><i></i>${esc(x.b.name)} <b class="${tone(x.b.return_pct)}">${signed(x.b.return_pct)}%</b></span>`).join('');
+    const t0 = Math.min(now - 86400000, ...series.map((x) => x.pts[0].t));
+    const W = svg.clientWidth || 600, H = Math.max(230, svg.clientHeight || 230), narrow = W < 520;
+    const pl = 50, pr = narrow ? 14 : 104, pt = 14, pb = 26;
+    const vals = series.flatMap((x) => x.pts.map((p) => p.v)).concat([0]);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const pad = Math.max(0.5, (hi - lo) * .15); lo -= pad; hi += pad;
+    const X = (t) => pl + (t - t0) / (now - t0) * (W - pl - pr);
+    const Y = (v) => pt + (1 - (v - lo) / (hi - lo)) * (H - pt - pb);
+    const ticks = [0, 1, 2, 3].map((k) => lo + (hi - lo) * k / 3);
+    // Escalones: el balance solo cambia al cerrar una operación; el último tramo incluye lo que va sin cerrar.
+    const path = (pts) => pts.map((p, i) => i ? `H${X(p.t).toFixed(1)} V${Y(p.v).toFixed(1)}` : `M${X(p.t).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(' ');
+    const dfmt = (t) => new Date(t).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' });
+    // Etiquetas al final de cada línea, separadas para que no se pisen.
+    const labels = narrow ? [] : series.map((x) => ({ x, y: Y(x.pts[x.pts.length - 1].v) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 15);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = `<g class="grid">${ticks.map((v) => `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}"/>`).join('')}</g>
+      <g class="axis">${ticks.map((v) => `<text x="${pl - 8}" y="${Y(v) + 4}" text-anchor="end">${signed(v, Math.abs(hi - lo) < 4 ? 1 : 0)}%</text>`).join('')}
+        <text x="${pl}" y="${H - 6}">${dfmt(t0)}</text><text x="${W - pr}" y="${H - 6}" text-anchor="end">ahora</text></g>
+      <line class="base" x1="${pl}" x2="${W - pr}" y1="${Y(0)}" y2="${Y(0)}"/>
+      ${series.map((x) => `<path d="${path(x.pts)}" fill="none" stroke="${x.c}" stroke-width="2" stroke-linejoin="round"/>
+        <circle cx="${X(now)}" cy="${Y(x.pts[x.pts.length - 1].v)}" r="4" fill="${x.c}" stroke="var(--card-solid)" stroke-width="2"/>`).join('')}
+      ${labels.map((l) => `<text x="${X(now) + 9}" y="${l.y + 4}" font-size="11.5" fill="var(--ink-2)">${esc(l.x.b.name.length > 13 ? l.x.b.name.slice(0, 12) + '…' : l.x.b.name)}</text>`).join('')}
+      <g id="cmp-cross" style="display:none"><line id="cmp-cx" y1="${pt}" y2="${H - pb}" stroke="var(--ink-3)" stroke-dasharray="3 4"/></g>
+      <rect x="${pl}" y="0" width="${W - pl - pr}" height="${H}" fill="transparent" id="cmp-hit"/>`;
+    const valAt = (pts, t) => { if (t < pts[0].t) return null; let v = pts[0].v; for (const p of pts) { if (p.t <= t) v = p.v; else break; } return v; };
+    const hit = svg.querySelector('#cmp-hit'), cross = svg.querySelector('#cmp-cross');
+    const move = (ev) => {
+      const rc = svg.getBoundingClientRect(), x = Math.max(pl, Math.min(W - pr, (ev.touches ? ev.touches[0].clientX : ev.clientX) - rc.left));
+      const t = t0 + (x - pl) / (W - pl - pr) * (now - t0);
+      cross.style.display = ''; svg.querySelector('#cmp-cx').setAttribute('x1', x); svg.querySelector('#cmp-cx').setAttribute('x2', x);
+      tip.innerHTML = `<div class="faint">${esc(localTime(new Date(t).toISOString()))}</div>` + series.map((s2) => {
+        const v = valAt(s2.pts, t);
+        return `<div><span style="color:${s2.c}">●</span> ${esc(s2.b.name)} <b class="num">${v === null ? 'aún no operaba' : signed(v) + '%'}</b></div>`;
+      }).join('');
+      tip.style.left = Math.max(90, Math.min(W - 90, x)) + 'px'; tip.style.top = pt + 40 + 'px';
+      tip.classList.remove('hidden');
+    };
+    const leave = () => { cross.style.display = 'none'; tip.classList.add('hidden'); };
+    hit.addEventListener('mousemove', move); hit.addEventListener('touchmove', move, { passive: true });
+    hit.addEventListener('mouseleave', leave); hit.addEventListener('touchend', leave);
+  }
+
+  if (window.matchMedia('(max-width: 640px)').matches) $('strat').open = false;   // en el móvil, plegada
 
   // ── Acciones ──
   async function refresh() {
     try {
-      const list = await api('/api/bots');
-      bots = list.bots || [];
-      if (!bots.some((b) => b.id === botId)) botId = list.default || (bots[0] && bots[0].id) || '';
-      renderBots();
-      render(await api(withBot('/api/state'))); showError('');
+      overview = await api('/api/overview');
+      bots = overview.bots || [];
+      if (view !== 'all' && !bots.some((b) => b.id === view)) { view = 'all'; history.replaceState(null, '', location.pathname); }
+      applyView(); renderViews();
+      if (view === 'all') renderOverview();
+      else { botId = view; render(await api(withBot('/api/state'))); }
+      showError('');
     } catch (e) { showError(e.message); }
   }
   $('btn-refresh').addEventListener('click', refresh);

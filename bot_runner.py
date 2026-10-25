@@ -51,6 +51,7 @@ log = logging.getLogger("bot_runner")
 
 BOTS_FILE = Path(__file__).resolve().parent / "deploy" / "bots.json"
 RUNNER_INTERVALS = ("1h", "4h", "1d")
+HEARTBEAT_S = 60.0                    # cada cuánto el bucle deja constancia de que sigue vivo (para el panel)
 
 @dataclass
 class RunnerConfig:
@@ -91,6 +92,7 @@ class BotRunner:
         self.sm = StateManager(cfg.db_path, cfg.initial_balance, self.p, cfg.fee_pct)
         self._seen_transitions = 0
         self._stop = False
+        self._last_beat = 0.0
 
     # ── Utilidades ──────────────────────────────────────────────────────────
     def _default_candles(self, symbol: str, interval: str, limit: int) -> pd.DataFrame:
@@ -99,6 +101,16 @@ class BotRunner:
     def last_closed_bar_open_ms(self, now_s: float | None = None) -> int:
         now_ms = int((self.clock() if now_s is None else now_s) * 1000)
         return (now_ms // self.step) * self.step - self.step
+
+    def heartbeat(self, now_s: float) -> None:
+        """Latido para el panel: entre velas de 4h o 1d no hay otra señal de que el bot sigue corriendo."""
+        if now_s - self._last_beat < HEARTBEAT_S:
+            return
+        at = pd.Timestamp(now_s, unit="s", tz="UTC").isoformat()
+        if self.sm.meta_get("started_at") is None:
+            self.sm.meta_set("started_at", at)
+        self.sm.meta_set("heartbeat", at)
+        self._last_beat = now_s
 
     def stop(self, *_):
         self._stop = True
@@ -252,6 +264,7 @@ class BotRunner:
             now = self.clock()
             try:
                 self.watch_cycle(now)
+                self.heartbeat(now)
                 since_close = (now * 1000 - (self.last_closed_bar_open_ms(now) + self.step)) / 1000
                 if since_close >= self.cfg.close_delay_seconds:
                     s = self.candle_cycle(now)

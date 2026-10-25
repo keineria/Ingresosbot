@@ -10,11 +10,14 @@ Autenticación: DASHBOARD_ACCESS_KEY en .env, enviada en la cabecera `X-Access-K
 
 Varios bots: si existe deploy/bots.json (o WEB_BOTS_FILE), el panel muestra cada bot de esa lista con su nombre
 y su estrategia, cada uno con su propia base SQLite. Las rutas /api/* aceptan ?bot=<id> (por defecto el primero).
+El archivo se vuelve a leer cuando cambia: un bot nuevo aparece en el panel sin reiniciar ingresosbot-web.
 
 Endpoints:
   GET  /                 dashboard (static/index.html; la página pide la clave)
   GET  /healthz          {"ok": true} sin clave, para monitoreo
   GET  /api/bots         lista de bots: nombre, estrategia explicada y resumen (balance, retorno, estado)
+  GET  /api/overview     todos los bots en vivo a la vez: cuenta y Capa 1, posiciones con precio actual,
+                         últimas operaciones, curva, decisión de la última vela y si el proceso está vivo
   GET  /api/state        cuenta, exposición, runner_meta, posiciones (con precio actual), últimos 20 trades,
                          PnL de hoy/semana/mes (UTC), curva de balance y precio actual de cada par
   POST /api/scan-now     diagnóstico de las 3 capas en cada par configurado (no abre órdenes)
@@ -32,6 +35,9 @@ import hmac
 import json
 import logging
 import os
+import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -44,7 +50,7 @@ from urllib.parse import parse_qs, urlsplit
 import pandas as pd
 
 import quant_core_engine as q
-from bot_runner import RunnerConfig, bot_settings, load_bots, settings_from_env
+from bot_runner import BOTS_FILE, RunnerConfig, bot_settings, load_bots, settings_from_env
 from market_fetcher import fetch_candles, fetch_price
 from notifier import Notifier, load_env_file
 from state_manager import StateManager
@@ -55,7 +61,42 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = 16 * 1024
 PRICE_TTL_S = 10.0
 MIN_KEY_LEN = 16
-BOT_TEXT_KEYS = ("summary", "how", "backtest", "service")
+BOT_TEXT_KEYS = ("summary", "how", "backtest", "service", "color")
+INTERVAL_S = {"1h": 3_600, "4h": 14_400, "1d": 86_400}
+HEARTBEAT_STALE_S = 300.0     # bot_runner deja un latido cada 60 s; sin latido en 5 min, algo pasa
+SERVICE_TTL_S = 30.0
+_SERVICE_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,80}$")
+_service_cache: dict[str, tuple[float, str | None]] = {}
+_service_lock = threading.Lock()
+
+
+def systemd_state(service: str | None, clock: Callable[[], float] = time.time) -> str | None:
+    """`systemctl is-active <servicio>` (active, inactive, failed…), en caché 30 s. None si no se puede saber."""
+    if not service or not _SERVICE_RE.match(service) or not shutil.which("systemctl"):
+        return None
+    now = clock()
+    with _service_lock:
+        hit = _service_cache.get(service)
+        if hit and now - hit[0] < SERVICE_TTL_S:
+            return hit[1]
+    try:
+        out = subprocess.run(["systemctl", "is-active", service], capture_output=True, text=True, timeout=3)
+        state = out.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("systemctl is-active %s: %s", service, exc)
+        state = None
+    with _service_lock:
+        _service_cache[service] = (now, state)
+    return state
+
+
+def _age_s(iso: str | None, now: float) -> float | None:
+    if not iso:
+        return None
+    try:
+        return max(0.0, now - pd.Timestamp(iso).timestamp())
+    except (ValueError, TypeError):
+        return None
 
 
 class ApiError(Exception):
@@ -71,7 +112,8 @@ class DashboardApp:
                  notifier: Notifier | None = None,
                  candle_source: Callable[[str, str, int], pd.DataFrame] | None = None,
                  price_source: Callable[[str], float] | None = None,
-                 clock: Callable[[], float] = time.time, bot: dict | None = None):
+                 clock: Callable[[], float] = time.time, bot: dict | None = None,
+                 service_state: Callable[[str | None], str | None] | None = None):
         if not access_key:
             raise ValueError("DASHBOARD_ACCESS_KEY vacío: define una clave en .env antes de arrancar el panel.")
         self.cfg, self.p, self.access_key = cfg, params, access_key
@@ -82,6 +124,7 @@ class DashboardApp:
         self.candle_source = candle_source or (lambda s, i, n: fetch_candles(s, i, n)[0])
         self.price_source = price_source or (lambda s: fetch_price(s)[0])
         self.clock = clock
+        self.service_state = service_state or (lambda svc: systemd_state(svc, clock))
         self.bot = {"id": bot.get("id", "oficial"), "name": bot.get("name", "Bot Oficial"),
                     **{k: bot[k] for k in BOT_TEXT_KEYS if k in bot}}
         self._price_cache: dict[str, tuple[float, float]] = {}
@@ -128,14 +171,7 @@ class DashboardApp:
             periods = {k: sm.pnl_since(v.isoformat()) | {"since": v.isoformat()} for k, v in starts.items()}
             curve = sm.balance_curve()
 
-        prices = {}
-        for pos in positions:
-            d = 1 if pos["side"] == "LONG" else -1
-            price = prices.setdefault(pos["symbol"], self._price(pos["symbol"]))
-            pos["current_price"] = price
-            pos["unrealized_pnl_usd"] = (round(pos["position_units"] * (price - pos["entry_price"]) * d, 2)
-                                         if price is not None else None)
-            pos["notional_usd"] = round(pos["position_units"] * pos["entry_price"], 2)
+        prices = self._with_prices(positions)
         bar_ms = int(last_bar) if last_bar else None
         market = {s: {"price": prices[s] if s in prices else self._price(s)} for s in self.cfg.symbols}
         return {
@@ -159,6 +195,89 @@ class DashboardApp:
             "recent_trades": trades,
             "last_scan": json.loads(last_scan) if last_scan else None,
             "control_log": control,
+        }
+
+    def _with_prices(self, positions: list[dict]) -> dict[str, float | None]:
+        """Añade a cada posición el precio actual y su PnL latente; devuelve los precios usados."""
+        prices: dict[str, float | None] = {}
+        for pos in positions:
+            d = 1 if pos["side"] == "LONG" else -1
+            price = prices.setdefault(pos["symbol"], self._price(pos["symbol"]))
+            notional = pos["position_units"] * pos["entry_price"]
+            pnl = pos["position_units"] * (price - pos["entry_price"]) * d if price is not None else None
+            pos["current_price"] = price
+            pos["unrealized_pnl_usd"] = round(pnl, 2) if pnl is not None else None
+            pos["unrealized_pct"] = round(pnl / notional * 100, 2) if pnl is not None and notional else None
+            pos["notional_usd"] = round(notional, 2)
+        return prices
+
+    # ── GET /api/overview (un bot, todo lo que cabe en su tarjeta en vivo) ──
+    def live(self) -> dict:
+        now = self.clock()
+        day = pd.Timestamp(now, unit="s", tz="UTC").normalize()
+        with self._sm() as sm:
+            acc = sm.account()
+            positions = sm.positions()
+            trades = sm.trades(last=5)
+            metrics = sm.metrics()
+            curve = sm.balance_curve()
+            today = sm.pnl_since(day.isoformat())
+            last_cycle = sm.meta_get("last_cycle")
+            beat = sm.meta_get("heartbeat")
+            started = [t for t in (sm.meta_get("started_at"), sm.first_trade_at()) if t]
+        self._with_prices(positions)
+        cycle = json.loads(last_cycle) if last_cycle else None
+        unreal = sum(p["unrealized_pnl_usd"] or 0.0 for p in positions)
+        init, bal = acc["initial_balance"], acc["balance"]
+        equity = bal + unreal
+
+        # ¿Sigue vivo el proceso? El latido (cada 60 s) manda; si no hay, se pregunta a systemd.
+        beat_age = _age_s(beat, now)
+        svc = self.service_state(self.bot.get("service"))
+        if beat_age is not None and beat_age <= HEARTBEAT_STALE_S:
+            health = "running"
+        elif svc == "active":
+            health = "running"
+        elif svc in ("inactive", "failed", "deactivating"):
+            health = "stopped"
+        elif beat is None and cycle is None:
+            health = "never"
+        else:
+            health = "stale"
+        step = INTERVAL_S.get(self.cfg.interval)
+        next_close = (int(now // step) + 1) * step if step else None
+        decisions = {}
+        for sym, d in ((cycle or {}).get("symbols") or {}).items():
+            if isinstance(d, dict):
+                decisions[sym] = {k: d[k] for k in ("decision", "regime", "blocking", "reason", "error") if d.get(k)}
+        return self.bot | {
+            "interval": self.cfg.interval, "symbols": self.cfg.symbols, "strategy": self.p.strategy,
+            "account": {k: acc[k] for k in ("status", "balance", "initial_balance", "daily_drawdown_pct",
+                                            "consecutive_losses", "cooldown_bars_remaining")}
+                       | {"manual_halt": bool(acc["manual_halt"])},
+            "limits": {"halt_losses": self.p.halt_losses, "throttle_losses": self.p.throttle_losses,
+                       "halt_dd_pct": self.p.halt_dd_pct, "cooldown_candles": self.p.cooldown_candles},
+            "equity": round(equity, 2),
+            "unrealized_pnl_usd": round(unreal, 2),
+            "return_pct": round((equity / init - 1) * 100, 2) if init else None,
+            "realized_return_pct": round((bal / init - 1) * 100, 2) if init else None,
+            "metrics": {k: metrics.get(k) for k in ("trades", "wins", "losses", "win_rate_pct", "profit_factor",
+                                                     "net_pnl_usd", "total_fees_usd")},
+            "today": today,
+            "open_positions": [{k: p.get(k) for k in (
+                "symbol", "side", "entry_price", "stop_loss", "initial_stop_loss", "take_profit", "trail_atr_mult",
+                "is_at_breakeven", "opened_at", "current_price", "unrealized_pnl_usd", "unrealized_pct",
+                "notional_usd")} for p in positions],
+            "recent_trades": [{k: t.get(k) for k in ("symbol", "side", "result", "exit_reason", "pnl_usd", "pnl_pct",
+                                                      "r_multiple", "opened_at", "closed_at")} for t in trades],
+            "balance_curve": curve,
+            "started_at": min(started) if started else None,
+            "runner": {"health": health, "service_state": svc, "heartbeat_at": beat,
+                       "heartbeat_age_s": round(beat_age) if beat_age is not None else None,
+                       "last_cycle_at": cycle.get("processed_at") if cycle else None,
+                       "last_bar_open": cycle.get("bar_open") if cycle else None,
+                       "next_bar_close": pd.Timestamp(next_close, unit="s", tz="UTC").isoformat() if next_close else None,
+                       "decisions": decisions},
         }
 
     def _config(self) -> dict:
@@ -258,23 +377,75 @@ class BotRegistry:
     """Varios DashboardApp (uno por bot de deploy/bots.json) detrás del mismo servidor y la misma clave."""
 
     def __init__(self, apps: list[DashboardApp]):
+        self._set_apps(apps)
+        self._source: tuple[Path, str, dict] | None = None   # (bots.json, clave, kw) si se recarga solo
+        self._mtime: float | None = None
+        self._reload_lock = threading.Lock()
+
+    def _set_apps(self, apps: list[DashboardApp]) -> None:
         if not apps:
             raise ValueError("No hay bots que mostrar")
+        prices: dict[str, tuple[float, float]] = {}
+        for a in apps:                         # un solo precio por par aunque varios bots lo operen
+            a._price_cache = prices
         self.apps = {a.bot["id"]: a for a in apps}
         self.default = apps[0].bot["id"]
 
-    @classmethod
-    def from_bots(cls, bots: list[dict], access_key: str, **kw) -> "BotRegistry":
+    @staticmethod
+    def _build(bots: list[dict], access_key: str, old: dict[str, DashboardApp] | None = None, **kw) -> list[DashboardApp]:
         apps = []
         for b in bots:
+            prev = (old or {}).get(b["id"])
+            if prev is not None and getattr(prev, "_def", None) == b:
+                apps.append(prev)              # sin cambios: conserva su estado (bloqueos, caché)
+                continue
             cfg, p = bot_settings(b)
-            apps.append(DashboardApp(cfg, p, access_key, bot=b, **kw))
-        return cls(apps)
+            app = DashboardApp(cfg, p, access_key, bot=b, **kw)
+            app._def = json.loads(json.dumps(b))
+            apps.append(app)
+        return apps
+
+    @classmethod
+    def from_bots(cls, bots: list[dict], access_key: str, **kw) -> "BotRegistry":
+        return cls(cls._build(bots, access_key, **kw))
+
+    @classmethod
+    def from_file(cls, path: str | Path, access_key: str, **kw) -> "BotRegistry":
+        """Como from_bots, pero vuelve a leer el archivo cuando cambia (añadir un bot = editar bots.json)."""
+        path = Path(path)
+        reg = cls.from_bots(load_bots(path), access_key, **kw)
+        reg._source = (path, access_key, kw)
+        reg._mtime = path.stat().st_mtime
+        return reg
+
+    def maybe_reload(self) -> bool:
+        if not self._source:
+            return False
+        path, key, kw = self._source
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return False
+        if mtime == self._mtime:
+            return False
+        with self._reload_lock:
+            if mtime == self._mtime:
+                return False
+            self._mtime = mtime
+            try:
+                apps = self._build(load_bots(path), key, old=self.apps, **kw)
+                self._set_apps(apps)
+            except (Exception, SystemExit) as exc:     # un bots.json mal escrito no tumba el panel
+                log.error("No se pudo recargar %s (se mantienen los bots anteriores): %s", path, exc)
+                return False
+        log.info("Bots recargados desde %s: %s", path, ", ".join(self.apps))
+        return True
 
     def check_key(self, provided: str | None) -> bool:
         return self.apps[self.default].check_key(provided)
 
     def get(self, bot_id: str | None) -> DashboardApp:
+        self.maybe_reload()
         if not bot_id:
             return self.apps[self.default]
         if bot_id not in self.apps:
@@ -282,6 +453,7 @@ class BotRegistry:
         return self.apps[bot_id]
 
     def bots(self) -> dict:
+        self.maybe_reload()
         out = []
         for a in self.apps.values():
             try:
@@ -290,6 +462,20 @@ class BotRegistry:
                 log.warning("Resumen de %s: %s", a.bot["id"], exc)
                 out.append(a.bot | {"error": f"{type(exc).__name__}: {exc}"})
         return {"default": self.default, "bots": out}
+
+    def overview(self) -> dict:
+        self.maybe_reload()
+        out = []
+        for a in list(self.apps.values()):
+            try:
+                out.append(a.live())
+            except Exception as exc:
+                log.warning("Vista en vivo de %s: %s", a.bot["id"], exc)
+                out.append(a.bot | {"interval": a.cfg.interval, "symbols": a.cfg.symbols,
+                                    "error": f"{type(exc).__name__}: {exc}"})
+        now = next(iter(self.apps.values())).clock()
+        return {"server_time": pd.Timestamp(now, unit="s", tz="UTC").isoformat(), "default": self.default,
+                "bots": out}
 
 
 def make_handler(app: DashboardApp | BotRegistry) -> type[BaseHTTPRequestHandler]:
@@ -371,6 +557,9 @@ def make_handler(app: DashboardApp | BotRegistry) -> type[BaseHTTPRequestHandler
                 elif path == "/api/bots":
                     if self._authorized(allow_query=True):
                         self._json(HTTPStatus.OK, registry.bots())
+                elif path == "/api/overview":
+                    if self._authorized(allow_query=True):
+                        self._json(HTTPStatus.OK, registry.overview())
                 else:
                     self._json(HTTPStatus.NOT_FOUND, {"error": "no encontrado"})
             except ApiError as exc:
@@ -428,9 +617,9 @@ def main(argv: list[str] | None = None) -> int:
     if host not in ("127.0.0.1", "localhost", "::1"):
         log.warning("Escuchando en %s: el panel queda expuesto fuera del proxy inverso.", host)
 
-    bots = load_bots(os.environ.get("WEB_BOTS_FILE") or None)
-    if bots:
-        registry = BotRegistry.from_bots(bots, key)
+    bots_file = Path(os.environ.get("WEB_BOTS_FILE") or BOTS_FILE)
+    if load_bots(bots_file):
+        registry = BotRegistry.from_file(bots_file, key)
     else:
         cfg, params = settings_from_env()
         registry = BotRegistry([DashboardApp(cfg, params, key)])

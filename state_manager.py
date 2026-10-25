@@ -465,6 +465,10 @@ class StateManager:
                               "WHERE closed_at >= ?", (since_iso,)).fetchone()
         return {"pnl_usd": round(r["pnl"], 2), "trades": r["n"]}
 
+    def first_trade_at(self) -> str | None:
+        """Apertura de la operación más antigua (para saber desde cuándo opera el bot)."""
+        return self.conn.execute("SELECT MIN(opened_at) FROM trade_history").fetchone()[0]
+
     def balance_curve(self, last: int = 300) -> list[dict]:
         """Balance tras cada cierre (los últimos `last`), en orden cronológico, para la curva del panel."""
         rows = self.conn.execute("SELECT closed_at, balance_after FROM trade_history ORDER BY id DESC LIMIT ?",
