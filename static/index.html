@@ -279,6 +279,17 @@
     .modal input { width: 100%; height: 40px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--inset); padding: 0 12px; outline: none; margin-bottom: 14px; }
     .modal input:focus { border-color: var(--accent); }
     .modal .row { display: flex; gap: 8px; justify-content: flex-end; }
+    /* ── Simulador de aportes ──────────────────────────────────────────── */
+    .sim { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 14px; }
+    @media (max-width: 1023px) { .sim { grid-template-columns: 1fr; } }
+    .sim-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+    .sim-form label { display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+    .sim-form label.span2 { grid-column: span 2; }
+    .sim-form input { width: 100%; height: 36px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--inset); padding: 0 10px; outline: none; font-variant-numeric: tabular-nums; }
+    .sim-form input:focus { border-color: var(--accent); }
+    .sim-form .sw { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+    .sim-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); padding: 0 16px 10px; }
+    .sim-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
   </style>
 </head>
@@ -418,6 +429,7 @@
     <button role="tab" data-tab="pos" aria-selected="false">Posiciones abiertas <span class="cnt" id="cnt-pos">0</span></button>
     <button role="tab" data-tab="hist" aria-selected="false">Historial <span class="cnt" id="cnt-hist">0</span></button>
     <button role="tab" data-tab="log" aria-selected="false">Registro de control</button>
+    <button role="tab" data-tab="sim" aria-selected="false">Plan de aportes</button>
   </nav>
 
   <div id="tab-perf" class="perf">
@@ -452,6 +464,33 @@
   </div>
 
   <div id="tab-log" class="card hidden"><ul id="log-body" class="log"></ul></div>
+
+  <div id="tab-sim" class="sim hidden">
+    <div class="card">
+      <div class="card-h"><svg class="i"><use href="#i-wallet"/></svg>Tu plan</div>
+      <div class="card-b">
+        <form id="sim-form" class="sim-form" autocomplete="off">
+          <label>Capital inicial ($)<input id="sim-cap" type="number" min="0" step="10" inputmode="decimal"></label>
+          <label>Aporte mensual ($)<input id="sim-add" type="number" min="0" step="5" inputmode="decimal"></label>
+          <label>Meses<input id="sim-months" type="number" min="1" max="120" step="1" inputmode="numeric"></label>
+          <label>Meta ($)<input id="sim-goal" type="number" min="0" step="50" inputmode="decimal"></label>
+          <label><span><i class="sw" style="background:var(--bad)"></i>En contra (%/mes)</span><input id="sim-r0" type="number" step="0.1" inputmode="decimal"></label>
+          <label><span><i class="sw" style="background:var(--ink-3)"></i>Sin rendimiento (%/mes)</span><input id="sim-r1" type="number" step="0.1" inputmode="decimal"></label>
+          <label class="span2"><span><i class="sw" style="background:var(--accent)"></i>Estrategia que funciona (%/mes)</span><input id="sim-r2" type="number" step="0.1" inputmode="decimal"></label>
+        </form>
+        <p class="note">Cada mes se aplica el rendimiento al saldo y luego se suma el aporte. Un +1% mensual sostenido ya es muy difícil: hasta ahora el backtest de la estrategia oficial dio negativo, así que el escenario realista hoy es el gris.</p>
+      </div>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column">
+      <div class="card-h"><svg class="i"><use href="#i-trend"/></svg>Cómo crece tu dinero<span class="right faint" id="sim-head" style="font-size:12px"></span></div>
+      <div class="chart-box" id="sim-box"><svg id="sim-chart" role="img" aria-label="Proyección del saldo por escenario"></svg><div id="sim-tip" class="tip hidden"></div></div>
+      <div class="sim-legend" id="sim-legend"></div>
+      <table class="t">
+        <thead><tr><th>Escenario</th><th class="r">Saldo final</th><th class="r">Tú aportaste</th><th class="r">Ganado o perdido</th><th class="r">Llega a la meta</th></tr></thead>
+        <tbody id="sim-body"></tbody>
+      </table>
+    </div>
+  </div>
 
   <p class="foot-note">Se actualiza solo cada 15 s · Las acciones requieren la clave de acceso · Horas en tu zona local, periodos (hoy, semana, mes) en UTC</p>
 </main>
@@ -498,7 +537,7 @@
   applyTheme(store.get(THEME) || 'dark');
   $('btn-theme').addEventListener('click', () => {
     const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    store.set(THEME, t); applyTheme(t); if (state) { drawChart(); drawWires(); }
+    store.set(THEME, t); applyTheme(t); if (state) { drawChart(); drawWires(); } drawSim();
   });
 
   // ── Formato ──
@@ -914,15 +953,99 @@
     hit.addEventListener('mouseleave', leave); hit.addEventListener('touchend', leave);
   }
 
+  // ── Plan de aportes (todo en el navegador; no toca el bot) ──
+  const SIM = 'ingresosbot.sim';
+  const SIM_DEF = { cap: 500, add: 50, months: 24, goal: 2000, r0: -1, r1: 0, r2: 1 };
+  const SIM_SERIES = [['r0', 'Mercado en contra', 'var(--bad)'], ['r1', 'Sin rendimiento', 'var(--ink-3)'], ['r2', 'Estrategia que funciona', 'var(--accent)']];
+  let sim = (() => { try { return { ...SIM_DEF, ...JSON.parse(store.get(SIM) || '{}') }; } catch (_) { return { ...SIM_DEF }; } })();
+  let simTouched = !!store.get(SIM);
+
+  // Saldo mes a mes: primero el rendimiento sobre el saldo, luego el aporte del mes.
+  function projectBalance(cap, add, ratePct, months) {
+    const out = [cap];
+    for (let m = 1; m <= months; m++) out.push(Math.max(0, out[m - 1] * (1 + ratePct / 100) + add));
+    return out;
+  }
+
+  function fillSimForm() {
+    for (const k of Object.keys(SIM_DEF)) $('sim-' + k).value = sim[k];
+  }
+
+  $('sim-form').addEventListener('input', () => {
+    for (const k of Object.keys(SIM_DEF)) {
+      const v = parseFloat($('sim-' + k).value);
+      if (!Number.isNaN(v)) sim[k] = v;
+    }
+    sim.months = Math.max(1, Math.min(120, Math.round(sim.months)));
+    sim.cap = Math.max(0, sim.cap); sim.add = Math.max(0, sim.add); sim.goal = Math.max(0, sim.goal);
+    simTouched = true; store.set(SIM, JSON.stringify(sim)); drawSim();
+  });
+
+  function drawSim() {
+    const svg = $('sim-chart'), tip = $('sim-tip');
+    if ($('tab-sim').classList.contains('hidden')) return;
+    // Si nunca se tocó el plan, arranca con el balance inicial real del bot.
+    if (!simTouched && state && state.account && state.account.initial_balance) sim.cap = Math.round(state.account.initial_balance);
+    if (!$('sim-form').contains(document.activeElement)) fillSimForm();
+    const n = sim.months;
+    const series = SIM_SERIES.map(([k, label, color]) => ({ label, color, rate: sim[k], vals: projectBalance(sim.cap, sim.add, sim[k], n) }));
+    const paid = (m) => sim.cap + sim.add * m;
+    const W = svg.clientWidth || 600, H = Math.max(260, svg.clientHeight || 260), pl = 64, pr = 12, pt = 14, pb = 26;
+    const all = series.flatMap((x) => x.vals).concat(sim.goal ? [sim.goal] : []);
+    let lo = Math.min(0, ...all), hi = Math.max(...all, 1);
+    hi += (hi - lo) * .06;
+    const X = (i) => pl + i / n * (W - pl - pr);
+    const Y = (v) => pt + (1 - (v - lo) / (hi - lo)) * (H - pt - pb);
+    const ticks = [0, 1, 2, 3].map((k) => lo + (hi - lo) * k / 3);
+    const path = (vals) => vals.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join(' ');
+    const fmtAxis = (v) => Number(v).toLocaleString('es-CO', { maximumFractionDigits: 0 });
+    const goalY = Y(sim.goal);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = `<g class="grid">${ticks.map((v) => `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}"/>`).join('')}</g>
+      <g class="axis">${ticks.map((v) => `<text x="${pl - 8}" y="${Y(v) + 4}" text-anchor="end">${fmtAxis(v)}</text>`).join('')}
+        <text x="${pl}" y="${H - 6}">Hoy</text><text x="${W - pr}" y="${H - 6}" text-anchor="end">Mes ${n}</text></g>
+      ${sim.goal ? `<line x1="${pl}" x2="${W - pr}" y1="${goalY}" y2="${goalY}" stroke="var(--warn)" stroke-dasharray="6 5" stroke-width="1.4"/>
+        <text x="${pl + 6}" y="${goalY - 6}" fill="var(--warn)" font-size="11">Meta ${fmtAxis(sim.goal)} $</text>` : ''}
+      ${series.map((x, i) => `<path d="${path(x.vals)}" fill="none" stroke="${x.color}" stroke-width="${i === 1 ? 2 : 2.2}" ${i === 1 ? 'stroke-dasharray="5 5"' : ''} stroke-linejoin="round"/>`).join('')}
+      <g id="sim-cross" style="display:none"><line id="sim-cx" y1="${pt}" y2="${H - pb}" stroke="var(--ink-3)" stroke-dasharray="3 4"/></g>
+      <rect x="${pl}" y="0" width="${W - pl - pr}" height="${H}" fill="transparent" id="sim-hit"/>`;
+    $('sim-legend').innerHTML = series.map((x) => `<span><i style="background:${x.color}"></i>${esc(x.label)} (${signed(x.rate, 1)}% mes)</span>`).join('');
+    $('sim-head').textContent = `${fmt(sim.add, 0)} $ al mes durante ${n} ${n === 1 ? 'mes' : 'meses'}`;
+
+    const goalMonth = (vals) => { const i = vals.findIndex((v) => v >= sim.goal); return i < 0 ? null : i; };
+    $('sim-body').innerHTML = series.slice().reverse().map((x) => {
+      const end = x.vals[n], diff = end - paid(n), gm = sim.goal ? goalMonth(x.vals) : null;
+      return `<tr><td data-l="Escenario"><span><span style="color:${x.color}">●</span> ${esc(x.label)} <span class="faint">${signed(x.rate, 1)}%/mes</span></span></td>
+        <td class="r" data-l="Saldo final"><b>${usd(end)}</b></td><td class="r" data-l="Tú aportaste">${usd(paid(n))}</td>
+        <td class="r ${tone(Math.round(diff * 100))}" data-l="Ganado o perdido">${signed(diff)} $</td>
+        <td class="r" data-l="Llega a la meta">${!sim.goal ? '—' : gm === null ? '<span class="faint">no en ' + n + ' meses</span>' : gm === 0 ? 'ya está' : 'mes ' + gm}</td></tr>`;
+    }).join('');
+
+    const hit = svg.querySelector('#sim-hit'), cross = svg.querySelector('#sim-cross');
+    const move = (ev) => {
+      const r = svg.getBoundingClientRect(), x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+      const i = Math.max(0, Math.min(n, Math.round((x - pl) / (W - pl - pr) * n)));
+      cross.style.display = ''; svg.querySelector('#sim-cx').setAttribute('x1', X(i)); svg.querySelector('#sim-cx').setAttribute('x2', X(i));
+      tip.innerHTML = `<div class="faint">${i ? 'Mes ' + i : 'Hoy'} · aportado ${usd(paid(i))}</div>` +
+        series.slice().reverse().map((s2) => `<div><span style="color:${s2.color}">●</span> <b class="num">${usd(s2.vals[i])}</b></div>`).join('');
+      tip.style.left = Math.max(80, Math.min(W - 70, X(i) + 14)) + 'px'; tip.style.top = (Y(series[2].vals[i]) - 6) + 'px';
+      tip.classList.remove('hidden');
+    };
+    const leave = () => { cross.style.display = 'none'; tip.classList.add('hidden'); };
+    hit.addEventListener('mousemove', move); hit.addEventListener('touchmove', move, { passive: true });
+    hit.addEventListener('mouseleave', leave); hit.addEventListener('touchend', leave);
+  }
+
   // ── Pestañas ──
   document.querySelector('.tabs').addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-tab]'); if (!b) return;
     document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
-    ['perf', 'pos', 'hist', 'log'].forEach((t) => $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
+    ['perf', 'pos', 'hist', 'log', 'sim'].forEach((t) => $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
     if (b.dataset.tab === 'perf') drawChart();
+    if (b.dataset.tab === 'sim') drawSim();
   });
 
-  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawWires(); drawChart(); }, 120); });
+  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawWires(); drawChart(); drawSim(); }, 120); });
 
   // ── Bots ──
   function renderBots() {

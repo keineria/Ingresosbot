@@ -7,3 +7,4 @@ logs/
 .venv/
 data/candles/*.csv
 data/alt_lab*.md
+data/arbitrage/
