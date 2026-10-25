@@ -15,6 +15,12 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 
 **Agentes de IA** (`ai_agents.py`, apagados por defecto): vigía de noticias que puede sugerir una pausa de entradas (la apruebas con un botón de Telegram), analista que vota cada señal, guardián de salidas, auditor con una hipótesis al mes como máximo y resumen diario. Empiezan en sombra y solo ganan permisos (vetar, reducir a la mitad, cerrar antes) cuando sus resultados en paper lo demuestran, con un laboratorio en sombra de 20 pares para juntar pruebas (`ai_autonomy.py`, `ai_lab.py`). Nunca abren operaciones ni tocan el riesgo. Cómo activarlos y cuánto cuestan: [docs/AGENTES_IA.md](docs/AGENTES_IA.md).
 
+**Varios bots con nombre propio** (`deploy/bots.json`): el panel muestra cada bot con su cuenta simulada y la ficha "Cómo opera". El tercero es **Tortuga 55**: ruptura del máximo de 55 días en velas diarias, sobre BTC, ETH, SOL, BNB, XRP y oro tokenizado (PAXG), con SL 3 ATR y trailing 5 ATR (`python bot_runner.py --bot tortuga`). Estrategias y activos alternativos probados (rotación, medias móviles, ETFs, oro, grid), cómo encender Tortuga 55 y el informe diario a GitHub (`daily_report.py`): [docs/ALTERNATIVAS.md](docs/ALTERNATIVAS.md). Laboratorio para repetirlo: `alt_lab.py`.
+
+**Panel con todos los bots en vivo**: `bot.commonbird.com` abre en *Todos los bots*, una tarjeta en vivo por estrategia (si el proceso está vivo, Capa 1, valor de la cuenta, posiciones con su precio actual, últimas operaciones, decisión de la última vela) y la curva comparada en %. Para añadir un cuarto bot basta con su ficha en `deploy/bots.json` y `systemctl enable --now ingresosbot-bot@ID`: [docs/PANEL_BOTS.md](docs/PANEL_BOTS.md).
+
+**Tu cuenta real de Binance, solo lectura**: la pestaña *Mi Binance* del panel muestra cada moneda que tienes en Spot, Earn y Funding con su valor en dólares. Usa una API key con solo *Enable Reading* (`BINANCE_API_KEY` / `BINANCE_API_SECRET` en `.env`); `binance_account.py` solo conoce llamadas de lectura y no usa una llave que permita operar o retirar. Los bots siguen en paper. Paso a paso: [docs/BINANCE_SOLO_LECTURA.md](docs/BINANCE_SOLO_LECTURA.md).
+
 ## Módulos
 
 | Archivo | Qué hace |
@@ -27,7 +33,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `sentiment_lab.py` | Prueba filtros externos de la Capa 1 (Fear & Greed, días FOMC/CPI) sobre Trend Rider en las 20 combinaciones de pares |
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
 | `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
-| `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |
+| `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, pestaña «Plan de aportes» para proyectar capital + aporte mensual, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`, `/api/binance` de solo lectura) en 127.0.0.1:8050 |
+| `arbitrage_scanner.py` | Medición de arbitraje SIN operar (solo APIs públicas): spreads entre 9 exchanges, triangular en Binance y funding de perpetuos; informe neto de comisiones para ~500 USD |
 
 ```bash
 pip install pandas numpy
@@ -73,6 +80,11 @@ cp .env.example .env            # rellena WEBHOOK_URL y/o TELEGRAM_BOT_TOKEN + T
 python notifier.py --test       # comprueba que llegan las alertas
 python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --once
 python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 4h --log-file logs/bot.log
+
+# Arbitraje: medir antes de operar (no envía órdenes ni usa claves)
+python arbitrage_scanner.py --once                       # qué exchanges responden desde este servidor
+python arbitrage_scanner.py --hours 6                    # graba en data/arbitrage/ y deja data/arbitrage/informe.md
+python arbitrage_scanner.py --report                     # rehace el informe con lo ya grabado
 
 # Pruebas
 python -m unittest discover -s tests -v

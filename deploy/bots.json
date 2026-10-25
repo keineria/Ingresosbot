@@ -1,0 +1,56 @@
+[
+  {
+    "id": "oficial",
+    "name": "Bot Oficial",
+    "trader": "Juan",
+    "service": "ingresosbot",
+    "db": "data/trading_state.db",
+    "interval": null,
+    "symbols": null,
+    "params": null,
+    "balance": null,
+    "summary": "Las reglas oficiales de las 3 Skills: compra retrocesos dentro de una tendencia alcista y sale con TP fijo o Break-Even.",
+    "how": [
+      "Entra si el precio está sobre la EMA 200, la EMA 20 sobre la EMA 50 con pendiente > +0,2% y el RSI entre 46 y 64.",
+      "Stop loss a 1,6 ATR, take profit a 3,6 ATR y Break-Even al avanzar 1,5 ATR.",
+      "Arriesga 1,5% del balance por operación (0,75% tras 2 pérdidas seguidas)."
+    ],
+    "backtest": "Con datos 2024-2026 y 500 USD perdió -12% (caída máx. 29%). Sigue como referencia, no para dinero real."
+  },
+  {
+    "id": "trend",
+    "name": "Trend Rider",
+    "trader": "Keiner",
+    "service": "ingresosbot-trend",
+    "db": "data/trend_state.db",
+    "interval": "4h",
+    "symbols": null,
+    "params": "deploy/trend_params.json",
+    "balance": 500,
+    "summary": "Sigue tendencias en velas de 4 horas: compra cuando el precio rompe su máximo de 20 velas y deja correr la ganancia.",
+    "how": [
+      "Entra si el cierre supera el máximo de las 20 velas anteriores, está sobre la EMA 200 y el cierre diario de ayer está sobre su media de 200 días.",
+      "Stop loss inicial a 2 ATR; luego un trailing stop a 5 ATR del máximo que solo sube. Sin take profit fijo.",
+      "Arriesga 1,5% del balance por operación, con el mismo Circuit Breaker (Capa 1)."
+    ],
+    "backtest": "2024-2026 con 500 USD en BTC+ETH+SOL: +50% con caída máx. 18,7%. Gana pocas veces (≈1 de 3), pero gana mucho cuando acierta."
+  },
+  {
+    "id": "tortuga",
+    "name": "Tortuga 55",
+    "trader": "Óscar",
+    "service": "ingresosbot-tortuga",
+    "db": "data/tortuga_state.db",
+    "interval": "1d",
+    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "PAXGUSDT"],
+    "params": "deploy/tortuga_params.json",
+    "balance": 500,
+    "summary": "La regla clásica de los Turtle Traders en velas diarias: compra la ruptura del máximo de 55 días. Incluye oro tokenizado (PAXG) para no depender solo de cripto.",
+    "how": [
+      "Una vez al día (00:00 UTC) mira cada par. Compra si el cierre supera el máximo de los 55 días anteriores, está sobre la EMA 200 y el cierre de ayer está sobre su media de 200 días.",
+      "Stop loss inicial a 3 ATR diarios; luego un trailing stop a 5 ATR del máximo que solo sube. Sin take profit fijo: deja correr la tendencia.",
+      "Arriesga 1,5% del balance por operación, con el mismo Circuit Breaker (Capa 1). Opera poco: unas 10 entradas al año."
+    ],
+    "backtest": "2024-2026 con 500 USD en BTC, ETH, SOL, BNB y XRP: +51,5% con la menor caída de todas las variantes (12,1%), 30 operaciones y 3,8 USD de comisiones. En 2026 (bajista) +4,1% mientras comprar y mantener perdía -18%. El oro (PAXG) aún no está probado con datos: se valida en el VPS."
+  }
+]

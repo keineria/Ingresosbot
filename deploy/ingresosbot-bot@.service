@@ -1,0 +1,24 @@
+# systemd (plantilla): cualquier bot de deploy/bots.json, por su id. Sirve para añadir un cuarto bot sin escribir
+# otro archivo de servicio. La parte tras la @ es el id de su ficha en bots.json:
+#   sudo systemctl enable --now ingresosbot-bot@cuarto      # enciende el bot con id "cuarto"
+#   journalctl -u ingresosbot-bot@cuarto -f                 # ver su log en vivo
+# En bots.json pon "service": "ingresosbot-bot@cuarto" para que el panel sepa si está encendido.
+# Los bots que ya tienen su propio servicio (ingresosbot, ingresosbot-trend, ingresosbot-tortuga) siguen igual.
+[Unit]
+Description=Ingresosbot bot %i en paper trading 24/7 (ficha %i de deploy/bots.json)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ingresosbot
+Group=ingresosbot
+WorkingDirectory=/opt/Ingresosbot
+ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --env-file .env --bot %i --log-file logs/bot-%i.log
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
