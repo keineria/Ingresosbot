@@ -10,6 +10,7 @@ Configuración por variables de entorno (o un archivo .env con --env-file en bot
 Eventos:
   position_opened   nueva posición abierta
   break_even        Stop-Loss protegido en Break-Even
+  trailing_stop     el trailing stop (perfil Trend Rider) subió el Stop-Loss; el ejecutor debe mover su orden
   position_closed   posición cerrada (WIN / LOSS / BREAKEVEN) con balance y racha
   status_changed    el Circuit Breaker pasa a THROTTLED o HALTED
   kill_switch       alguien activa o desactiva el kill switch desde el panel / API
@@ -65,12 +66,13 @@ def _fmt(x: float | None, nd: int = 2) -> str:
 class Notifier:
     def __init__(self, webhook_url: str | None = None, telegram_token: str | None = None,
                  telegram_chat_id: str | None = None, post: Callable[[str, dict], int] = _http_post_json,
-                 retries: int = 1):
+                 retries: int = 1, label: str | None = None):
         self.webhook_url = webhook_url or None
         self.telegram_token = telegram_token or None
         self.telegram_chat_id = telegram_chat_id or None
         self.post = post
         self.retries = retries
+        self.label = label or None       # p. ej. "Trend Rider": antepone [Trend Rider] a cada mensaje
 
     @classmethod
     def from_env(cls, **kw) -> "Notifier":
@@ -95,13 +97,15 @@ class Notifier:
 
     def send(self, event: str, data: dict, text: str) -> bool:
         """Envía a todos los destinos configurados. True si al menos uno lo recibió."""
+        if self.label:
+            text = f"[{self.label}] {text}"
         if not self.enabled:
             log.info("[sin destino] %s: %s", event, text.replace("\n", " | "))
             return False
         ok = []
         if self.webhook_url:
             ok.append(self._post(self.webhook_url, {
-                "event": event, "data": data, "text": text,
+                "event": event, "data": data, "text": text, "bot": self.label or "official",
                 "sent_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}, "webhook"))
         if self.telegram_token and self.telegram_chat_id:
             ok.append(self._post(f"{TELEGRAM_API}/bot{self.telegram_token}/sendMessage",
@@ -109,12 +113,17 @@ class Notifier:
                                   "disable_web_page_preview": True}, "telegram"))
         return any(ok)
 
-    # ── Los 4 eventos ───────────────────────────────────────────────────────
+    # ── Eventos ─────────────────────────────────────────────────────────────
     def position_opened(self, pos: dict, account: dict) -> bool:
+        if pos.get("trail_atr_mult"):
+            exits = (f"SL inicial: {_fmt(pos['stop_loss'])} · sin TP fijo\n"
+                     f"Trailing stop: máximo desde la entrada − {pos['trail_atr_mult']:g} ATR (solo sube)\n")
+        else:
+            exits = (f"SL: {_fmt(pos['stop_loss'])} · TP: {_fmt(pos['take_profit'])}\n"
+                     f"Break-Even al tocar {_fmt(pos['breakeven_trigger'])} → SL {_fmt(pos['breakeven_stop_price'])}\n")
         text = (f"🟢 NUEVA POSICIÓN {pos['side']} {pos['symbol']}\n"
                 f"Entrada: {_fmt(pos['entry_price'])}\n"
-                f"SL: {_fmt(pos['stop_loss'])} · TP: {_fmt(pos['take_profit'])}\n"
-                f"Break-Even al tocar {_fmt(pos['breakeven_trigger'])} → SL {_fmt(pos['breakeven_stop_price'])}\n"
+                + exits +
                 f"Unidades: {pos['position_units']} · Riesgo: {_fmt(pos['risk_usd'])} USD ({pos.get('risk_mode')})\n"
                 f"Régimen: {pos.get('regime')} · Balance: {_fmt(account['balance'])} USD")
         return self.send("position_opened", {"position": pos, "account": account}, text)
@@ -125,6 +134,16 @@ class Notifier:
                 f"(trigger {_fmt(pos['breakeven_trigger'])})\n"
                 f"Nuevo SL: {_fmt(pos['breakeven_stop_price'])} (entrada {_fmt(pos['entry_price'])})")
         return self.send("break_even", {"position": pos, "price": price}, text)
+
+    def trailing_stop(self, ev: dict) -> bool:
+        pos = ev["position"]
+        locked = (ev["new_stop_loss"] - pos["entry_price"]) * (1 if pos["side"] == "LONG" else -1)
+        text = (f"📈 TRAILING STOP {pos['side']} {pos['symbol']}\n"
+                f"SL: {_fmt(ev['old_stop_loss'])} → {_fmt(ev['new_stop_loss'])} "
+                f"({'asegura' if locked > 0 else 'reduce el riesgo a'} {locked * pos['position_units']:+,.2f} USD)\n"
+                f"Extremo desde la entrada: {_fmt(ev['peak'])} · ATR14: {_fmt(ev['atr14'])}")
+        return self.send("trailing_stop", {"position": pos, "old_stop_loss": ev["old_stop_loss"],
+                                           "new_stop_loss": ev["new_stop_loss"]}, text)
 
     def position_closed(self, trade: dict, account: dict) -> bool:
         icon = {"WIN": "✅", "LOSS": "🔴", "BREAKEVEN": "⚪"}.get(trade["result"], "•")

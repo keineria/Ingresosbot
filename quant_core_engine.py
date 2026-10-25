@@ -7,6 +7,11 @@ Cadena de ejecución obligatoria (en este orden):
   CAPA 2  market-regime-quant         -> régimen de mercado y señal (LONG / SHORT / WAIT)
   CAPA 3  atr-risk-guardian           -> SL, TP, Break-Even y tamaño de posición
 
+Perfiles (Params.strategy):
+  "official"  reglas oficiales de SKILL_1..3 (por defecto, sin cambios).
+  "trend"     Trend Rider (SKILL_4): misma Capa 1; la Capa 2 entra por ruptura de Donchian sobre la EMA200
+              y la Capa 3 sale con un trailing stop por ATR en vez de TP fijo y Break-Even.
+
 Sin APIs externas ni conexión a internet: solo Python estándar + pandas + numpy.
 
 Entradas aceptadas:
@@ -32,7 +37,7 @@ import argparse
 import json
 import math
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_CEILING, ROUND_DOWN, ROUND_HALF_UP
 from pathlib import Path
@@ -42,7 +47,9 @@ import numpy as np
 import pandas as pd
 
 ENGINE_NAME = "quant_core_engine"
-ENGINE_VERSION = "1.2.0"
+ENGINE_VERSION = "1.3.0"
+STRATEGIES = ("official", "trend")
+TREND_ENTRIES = ("breakout", "pullback", "both", "daily_filter")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -85,9 +92,19 @@ class Params:
     halt_dd_pct: float = 3.0
     cooldown_candles: int = 15
 
+    # --- Perfil paralelo "trend" (Trend Rider, SKILL_4). Con strategy="official" no se usa nada de esto ---
+    strategy: str = "official"         # "official" | "trend"
+    trend_entry: str = "breakout"      # "breakout" | "pullback" (la entrada oficial) | "both"
+    donchian_len: int = 20             # ruptura: Close > máximo de las 20 velas anteriores
+    trend_sl_atr_mult: float = 2.5     # SL inicial = Entry - 2.5 ATR (también fija el tamaño)
+    trail_atr_mult: float = 4.0        # trailing: SL = máximo desde la entrada - 4 ATR; solo sube
+    trend_allow_short: bool = False    # True solo en Futuros: ruptura bajista bajo la EMA200
+    daily_sma_len: int = 0             # >0: filtro diario; LONG solo si el cierre diario de AYER > SMA de N días
+    trend_exit_on_filter: bool = False  # True: cerrar la posición cuando el filtro diario se da la vuelta
+
     @property
     def min_candles(self) -> int:
-        return self.ema_slow + self.slope_lookback
+        return max(self.ema_slow + self.slope_lookback, self.donchian_len + 1)
 
     @property
     def recommended_candles(self) -> int:
@@ -193,7 +210,23 @@ def compute_indicators(df: pd.DataFrame, p: Params) -> pd.DataFrame:
     out["rsi14"] = rsi(out["close"], p.rsi_len)
     out["atr14"] = atr(out["high"], out["low"], out["close"], p.atr_len)
     out["ema20_slope_pct"] = (out["ema20"] / out["ema20"].shift(p.slope_lookback) - 1.0) * 100.0
+    # Canal de Donchian de las velas ANTERIORES (sin la actual): romperlo es cerrar por encima / debajo.
+    out["donchian_high"] = out["high"].rolling(p.donchian_len).max().shift(1)
+    out["donchian_low"] = out["low"].rolling(p.donchian_len).min().shift(1)
+    # Filtro diario: +1 si el cierre diario del día ANTERIOR (ya cerrado) está sobre su SMA de N días,
+    # -1 si está debajo, 0 si el filtro está apagado o aún no hay N días de historia.
+    out["daily_trend"] = 0.0
+    if p.daily_sma_len > 0 and "time" in out.columns:
+        day = pd.to_datetime(out["time"], utc=True).dt.floor("D")
+        daily_close = out["close"].groupby(day.values).last()
+        sma = daily_close.rolling(p.daily_sma_len).mean()
+        sign = np.sign(daily_close - sma).shift(1).fillna(0.0)
+        out["daily_trend"] = day.map(pd.Series(sign.values, index=pd.to_datetime(sign.index, utc=True))).fillna(0.0).values
     return out
+
+
+INDICATOR_KEYS = ("close", "ema20", "ema50", "ema200", "rsi14", "atr14", "ema20_slope_pct",
+                  "donchian_high", "donchian_low", "daily_trend")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -463,6 +496,92 @@ def market_regime(ind: dict, p: Params) -> dict:
     }
 
 
+def trend_regime(ind: dict, p: Params) -> dict:
+    """Capa 2 del perfil "trend" (SKILL_4): el mismo diagnóstico de régimen, otra regla de entrada.
+
+    breakout: Close > EMA200 y Close > máximo de las `donchian_len` velas anteriores (LONG);
+              en Futuros (trend_allow_short) el espejo: Close < EMA200 y Close < mínimo del canal.
+    pullback: la entrada oficial de market_regime() (retroceso en tendencia, RSI 46-64).
+    both:     cualquiera de las dos.
+    daily_filter: solo el filtro diario (comprado mientras el cierre diario de ayer > SMA de daily_sma_len días).
+    Con daily_sma_len > 0 el filtro diario se exige además en cualquier modo.
+    Sin filtro de extensión en la ruptura: una ruptura suele ir estirada y es justo la que se quiere.
+    """
+    if p.trend_entry not in TREND_ENTRIES:
+        raise ValueError(f"trend_entry debe ser uno de {TREND_ENTRIES} (recibido {p.trend_entry!r})")
+    if p.trend_entry == "daily_filter" and p.daily_sma_len <= 0:
+        raise ValueError("trend_entry='daily_filter' necesita daily_sma_len > 0 (p. ej. 200)")
+    base = market_regime(ind, replace(p, allow_short=p.trend_allow_short))
+    use_breakout = p.trend_entry in ("breakout", "both")
+    use_pullback = p.trend_entry in ("pullback", "both")
+    dh, dl = ind.get("donchian_high"), ind.get("donchian_low")
+    if use_breakout and any(v is None or (isinstance(v, float) and math.isnan(v)) for v in (dh, dl)):
+        raise ValueError("Indicador 'donchian_high/low' no disponible (historial insuficiente o falta en el modo manual).")
+
+    close, e200, n = ind["close"], ind["ema200"], p.donchian_len
+    long_checks = {"macro_close_gt_ema200": close > e200,
+                   f"breakout_close_gt_max{n}": bool(use_breakout and close > dh)}
+    short_checks = {"macro_close_lt_ema200": close < e200,
+                    f"breakout_close_lt_min{n}": bool(use_breakout and close < dl),
+                    "short_enabled": p.trend_allow_short}
+    if p.trend_entry == "daily_filter":
+        long_checks, short_checks = {}, {"short_enabled": p.trend_allow_short}
+    daily_long = daily_short = True
+    if p.daily_sma_len > 0:
+        dt = float(ind.get("daily_trend") or 0.0)
+        daily_long, daily_short = dt > 0, dt < 0
+        long_checks[f"daily_close_gt_sma{p.daily_sma_len}d"] = daily_long
+        short_checks[f"daily_close_lt_sma{p.daily_sma_len}d"] = daily_short
+    breakout_long = (use_breakout or p.trend_entry == "daily_filter") and all(long_checks.values())
+    breakout_short = (use_breakout or p.trend_entry == "daily_filter") and all(short_checks.values())
+    pullback_long = use_pullback and base["signal"] == "LONG" and daily_long
+    pullback_short = use_pullback and base["signal"] == "SHORT" and daily_short and p.trend_allow_short
+
+    trigger = None
+    if breakout_long or pullback_long:
+        signal, trigger = "LONG", ("daily_filter" if p.trend_entry == "daily_filter" else
+                                   "breakout" if breakout_long else "pullback")
+    elif breakout_short or pullback_short:
+        signal, trigger = "SHORT", ("daily_filter" if p.trend_entry == "daily_filter" else
+                                    "breakout" if breakout_short else "pullback")
+    else:
+        signal = "WAIT / NO_TRADE"
+
+    blocking: list[str] = []
+    if signal == "WAIT / NO_TRADE":
+        if use_breakout or p.trend_entry == "daily_filter":
+            blocking += ["TREND.LONG." + k for k, v in long_checks.items() if not v]
+            if p.trend_allow_short:
+                blocking += ["TREND.SHORT." + k for k, v in short_checks.items() if not v]
+        if use_pullback:
+            blocking += ["PULLBACK." + b for b in base["blocking_filters"]]
+            if base["signal"] == "LONG" and not daily_long:
+                blocking.append(f"PULLBACK.daily_close_gt_sma{p.daily_sma_len}d")
+
+    out = dict(base)
+    out["indicators"] = dict(base["indicators"],
+                             donchian_high=None if dh is None else round(float(dh), 8),
+                             donchian_low=None if dl is None else round(float(dl), 8))
+    out.update(strategy="trend", entry_mode=p.trend_entry, entry_trigger=trigger, signal=signal,
+               breakout_long_checks=long_checks, breakout_short_checks=short_checks, blocking_filters=blocking)
+    return out
+
+
+def trend_exit_signal(ind: dict, side: str, p: Params) -> bool:
+    """True si el filtro diario se dio la vuelta contra la posición (solo con trend_exit_on_filter)."""
+    if not (p.trend_exit_on_filter and p.daily_sma_len > 0):
+        return False
+    dt = float(ind.get("daily_trend") or 0.0)
+    return dt <= 0 if side == "LONG" else dt >= 0
+
+
+def evaluate_layer2(ind: dict, p: Params) -> dict:
+    """Capa 2 según el perfil elegido en Params.strategy."""
+    if p.strategy not in STRATEGIES:
+        raise ValueError(f"strategy debe ser uno de {STRATEGIES} (recibido {p.strategy!r})")
+    return trend_regime(ind, p) if p.strategy == "trend" else market_regime(ind, p)
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # CAPA 3 — ATR RISK GUARDIAN
 # ════════════════════════════════════════════════════════════════════════════
@@ -534,6 +653,20 @@ def atr_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
     }
 
 
+def trend_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
+                        risk_pct: float, p: Params) -> dict:
+    """Capa 3 del perfil "trend": misma fórmula de tamaño (riesgo % / distancia al SL, tope 85% × apalancamiento),
+    SL inicial a trend_sl_atr_mult ATR y salida por trailing stop: sin TP fijo ni Break-Even.
+    El trailing lo mueve state_manager al cierre de cada vela: SL = máximo desde la entrada - trail_atr_mult ATR."""
+    m = p.trend_sl_atr_mult
+    r = atr_risk_guardian(side, entry, atr_value, balance, risk_pct,
+                          replace(p, sl_atr_mult=m, tp_atr_mult=m, be_atr_mult=m))
+    r.update(exit_mode="trailing_stop", take_profit=None, break_even_trigger=None, break_even_new_sl=None,
+             reward_usd=None, reward_risk_ratio=None, trail_atr_mult=p.trail_atr_mult,
+             trail_distance_usd=round(p.trail_atr_mult * atr_value, 8))
+    return r
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # ORQUESTADOR
 # ════════════════════════════════════════════════════════════════════════════
@@ -545,7 +678,7 @@ def _last_indicators(df: pd.DataFrame, p: Params) -> tuple[dict, list[str], Any]
         warnings.append(f"Solo {len(df)} velas: la EMA{p.ema_slow} converge mejor con >= {p.recommended_candles}.")
     ind_df = compute_indicators(df, p)
     last = ind_df.iloc[-1]
-    ind = {k: float(last[k]) for k in ("close", "ema20", "ema50", "ema200", "rsi14", "atr14", "ema20_slope_pct")}
+    ind = {k: float(last[k]) for k in INDICATOR_KEYS}
     candle_time = last["time"].isoformat() if "time" in ind_df.columns and pd.notna(last["time"]) else None
     return ind, warnings, candle_time
 
@@ -558,6 +691,9 @@ def _manual_indicators(m: dict, p: Params) -> dict:
         ind["ema20_slope_pct"] = (ind["ema20"] / float(m["ema20_prev3"]) - 1.0) * 100.0
     else:
         raise ValueError("Modo manual: falta 'ema20_prev3' o 'ema20_slope_pct'.")
+    for k in ("donchian_high", "donchian_low", "daily_trend"):      # solo los necesita el perfil "trend"
+        if k in m:
+            ind[k] = float(m[k])
     return ind
 
 
@@ -572,6 +708,7 @@ def run_engine(account: dict, candles: pd.DataFrame | None = None, manual: dict 
         "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "symbol": symbol,
         "timeframe": timeframe,
+        "strategy": p.strategy,
         "candle_time": None,
         "input_mode": "manual" if manual is not None else "ohlcv",
         "decision": None,
@@ -596,7 +733,7 @@ def run_engine(account: dict, candles: pd.DataFrame | None = None, manual: dict 
         result["warnings"].extend(warns)
     else:
         raise ValueError("Se requiere `candles` (OHLCV) o `manual` (indicadores).")
-    mr = market_regime(ind, p)
+    mr = evaluate_layer2(ind, p)
     result["layer_2_market_regime"] = mr
     if mr["signal"] not in ("LONG", "SHORT"):
         result["decision"] = "WAIT / NO_TRADE"
@@ -606,7 +743,8 @@ def run_engine(account: dict, candles: pd.DataFrame | None = None, manual: dict 
 
     # CAPA 3
     entry = float(entry_price) if entry_price is not None else ind["close"]
-    risk = atr_risk_guardian(mr["signal"], entry, ind["atr14"], state.balance, cb["risk_pct"], p)
+    guardian = trend_risk_guardian if p.strategy == "trend" else atr_risk_guardian
+    risk = guardian(mr["signal"], entry, ind["atr14"], state.balance, cb["risk_pct"], p)
     result["layer_3_atr_risk_guardian"] = risk
     if risk["below_min_notional"]:
         result["decision"] = "WAIT / NO_TRADE"
@@ -629,6 +767,13 @@ def run_engine(account: dict, candles: pd.DataFrame | None = None, manual: dict 
         "risk_mode": cb["status"],
         "client_tag": f"qce-{mr['regime'].lower()}",
     }
+    if p.strategy == "trend":
+        # Sin TP ni Break-Even: el ejecutor debe mover el stop cuando llegue el evento "trailing_stop".
+        result["order"].update(
+            take_profit=None, break_even=None, client_tag=f"qce-trend-{mr['entry_trigger']}",
+            trailing_stop={"type": "chandelier_atr", "atr_mult": p.trail_atr_mult,
+                           "distance_usd": risk["trail_distance_usd"],
+                           "rule": "SL = máximo desde la entrada - atr_mult x ATR14, al cierre de cada vela; solo sube"})
     return _clean(result)
 
 
@@ -647,6 +792,9 @@ def markdown_summary(r: dict) -> str:
     if mr.get("evaluated"):
         i = mr["indicators"]
         rows += [
+            ("Perfil", "Trend Rider (SKILL_4) · entrada " + mr["entry_mode"]
+                       + (f" → disparó {mr['entry_trigger']}" if mr.get("entry_trigger") else "")
+                       if mr.get("strategy") == "trend" else "oficial (SKILL_1..3)"),
             ("Capa 2 · Régimen", f"{mr['regime']} → {mr['signal']}"),
             ("Close / EMA20 / EMA50 / EMA200", f"{i['close']:.2f} / {i['ema20']:.2f} / {i['ema50']:.2f} / {i['ema200']:.2f}"),
             ("Pendiente EMA20 (3v) / RSI14", f"{i['ema20_slope_3c_pct']:+.3f}% / {i['rsi14']:.2f}"),
@@ -656,7 +804,17 @@ def markdown_summary(r: dict) -> str:
             rows.append(("Filtros que bloquean", "; ".join(mr["blocking_filters"])))
     else:
         rows.append(("Capa 2 · Régimen", "no evaluada (" + mr["reason"] + ")"))
-    if rk.get("evaluated"):
+    if rk.get("evaluated") and rk.get("exit_mode") == "trailing_stop":
+        rows += [
+            ("Capa 3 · Entrada / SL inicial", f"{rk['entry_price']:.2f} / {rk['stop_loss']:.2f}"),
+            ("Salida", f"trailing stop: máximo desde la entrada − {rk['trail_atr_mult']:g} ATR "
+                       f"({rk['trail_distance_usd']:.2f}); sin TP fijo ni Break-Even"),
+            ("Tamaño / Cantidad", f"{rk['position_size_usd']:.2f} USD / {rk['quantity']}"
+                                  + (f" (tope {rk['position_cap_usd']:.2f} USD, x{rk['max_leverage']:g})"
+                                     if rk["capped_by_max_allocation"] else "")),
+            ("Riesgo efectivo", f"{rk['risk_usd_effective']:.2f} USD ({rk['risk_pct_effective']:.3f}%)"),
+        ]
+    elif rk.get("evaluated"):
         rows += [
             ("Capa 3 · Entrada / SL / TP", f"{rk['entry_price']:.2f} / {rk['stop_loss']:.2f} / {rk['take_profit']:.2f}"),
             ("Break-Even (trigger → nuevo SL)", f"{rk['break_even_trigger']:.2f} → {rk['break_even_new_sl']:.2f}"),

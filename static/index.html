@@ -583,6 +583,10 @@
     drawChart();
   }
 
+  // Perfil Trend Rider: sin TP fijo ni BE; el SL sube solo (trailing).
+  const protection = (p, beLabel) => p.is_at_breakeven ? pill(beLabel, 's-good')
+    : p.trail_atr_mult && p.stop_loss !== p.initial_stop_loss ? pill('Trailing activo', 's-accent') : pill('SL inicial', 's-mute');
+
   function renderPositions(pos) {
     $('cnt-pos').textContent = pos.length;
     $('pos-body').innerHTML = pos.length ? pos.map((p) => `<tr>
@@ -590,11 +594,11 @@
         <td data-l="Lado" class="${p.side === 'LONG' ? 'good' : 'bad'}">${esc(p.side)}</td>
         <td data-l="Entrada" class="r">${px(p.entry_price)}</td>
         <td data-l="SL actual" class="r">${px(p.stop_loss)}</td>
-        <td data-l="TP" class="r">${px(p.take_profit)}</td>
-        <td data-l="Trigger BE" class="r muted">${px(p.breakeven_trigger)}</td>
+        <td data-l="TP" class="r">${p.trail_atr_mult ? 'trailing ' + fmt(p.trail_atr_mult, 1) + ' ATR' : px(p.take_profit)}</td>
+        <td data-l="Trigger BE" class="r muted">${p.trail_atr_mult ? '—' : px(p.breakeven_trigger)}</td>
         <td data-l="Precio" class="r">${px(p.current_price)}</td>
         <td data-l="PnL latente" class="r ${tone(p.unrealized_pnl_usd)}">${signed(p.unrealized_pnl_usd)}</td>
-        <td data-l="Protección">${p.is_at_breakeven ? pill('BE +0,2%', 's-good') : pill('SL inicial', 's-mute')}</td></tr>`).join('')
+        <td data-l="Protección">${protection(p, 'BE +0,2%')}</td></tr>`).join('')
       : '<tr><td colspan="9" class="empty" style="display:block;text-align:center">Sin posiciones abiertas</td></tr>';
   }
 
@@ -729,8 +733,10 @@
       $('l3-b').innerHTML = `
         <div class="kv"><span>Entrada</span><span>${px(l3.entry_price)}</span></div>
         <div class="kv"><span>Stop loss</span><span class="bad">${px(l3.stop_loss)}${nil(l3.sl_distance_pct) ? '' : ` <span class="faint">(−${fmt(l3.sl_distance_pct)}%)</span>`}</span></div>
-        <div class="kv"><span>Take profit</span><span class="good">${px(l3.take_profit)}</span></div>
-        <div class="kv"><span>Break-even al tocar</span><span>${px(l3.break_even_trigger)}</span></div>
+        ${nil(l3.take_profit)
+          ? `<div class="kv"><span>Salida</span><span class="good">trailing ${fmt(l3.trail_atr_mult, 1)} ATR</span></div>`
+          : `<div class="kv"><span>Take profit</span><span class="good">${px(l3.take_profit)}</span></div>
+        <div class="kv"><span>Break-even al tocar</span><span>${px(l3.break_even_trigger)}</span></div>`}
         <div class="kv"><span>Tamaño</span><span>${usd(l3.position_size_usd)}</span></div>
         <div class="kv"><span>Riesgo real</span><span>${usd(l3.risk_usd_effective)}${nil(l3.reward_risk_ratio) ? '' : ` · R:R ${fmt(l3.reward_risk_ratio)}`}</span></div>`;
     } else {
@@ -748,7 +754,7 @@
         <div class="kv"><span>SL actual</span><span>${px(pos.stop_loss)}</span></div>
         <div class="kv"><span>Precio</span><span>${px(pos.current_price)}</span></div>
         <div class="kv"><span>PnL latente</span><span class="${tone(pos.unrealized_pnl_usd)}">${signed(pos.unrealized_pnl_usd)} $</span></div>
-        <div style="margin-top:6px">${pos.is_at_breakeven ? pill('Protegida en BE +0,2%', 's-good') : pill('SL inicial', 's-mute')}</div>`;
+        <div style="margin-top:6px">${protection(pos, 'Protegida en BE +0,2%')}</div>`;
     } else if (a.status === 'HALTED') {
       exePill = pill('Bloqueada', 's-bad');
       exeHtml = `<div class="muted" style="font-size:13px">La Capa 1 tiene la cuenta detenida: no se abren órdenes nuevas${a.cooldown_bars_remaining > 0 ? ' durante ' + a.cooldown_bars_remaining + ' velas' : ''}.</div>`;

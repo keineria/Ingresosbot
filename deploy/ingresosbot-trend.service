@@ -1,0 +1,28 @@
+# systemd: Trend Rider (SKILL_4) en paper trading, EN PARALELO al bot oficial y con su propia base.
+# deploy/install_almalinux.sh lo copia pero no lo activa. Para encenderlo:
+#   sudo systemctl enable --now ingresosbot-trend
+#   journalctl -u ingresosbot-trend -f          # ver el log en vivo
+# Comparte el .env (pares y alertas de Telegram, que llegan con el prefijo [Trend Rider]);
+# las variables de abajo tienen prioridad sobre el .env. Los parámetros se editan en deploy/trend_params.json.
+[Unit]
+Description=Ingresosbot Trend Rider paper trading 24/7 (perfil paralelo)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ingresosbot
+Group=ingresosbot
+WorkingDirectory=/opt/Ingresosbot
+Environment=BOT_DB=data/trend_state.db
+Environment=BOT_INTERVAL=4h
+Environment=BOT_PARAMS=deploy/trend_params.json
+Environment=BOT_BALANCE=500
+ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --env-file .env --log-file logs/bot-trend.log
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
