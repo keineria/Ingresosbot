@@ -1186,7 +1186,7 @@
     const slot = Number.isInteger(b.color) && b.color >= 1 && b.color <= 8 ? b.color : (i % 8) + 1;
     return `var(--series-${slot})`;
   };
-  // Cada bot puede llevar nombre de persona ("trader" en bots.json): "Juan" opera la estrategia "Bot Oficial".
+  // Cada bot puede llevar nombre de persona ("trader" en bots.json): "Nathalia" opera la estrategia "Bot Oficial".
   const who = (b) => (b && (b.trader || b.name)) || '';
   const whoFull = (b) => b && b.trader ? b.trader + ' · ' + b.name : (b ? b.name : '');
   const initial = (b) => esc(who(b).trim().charAt(0).toUpperCase() || '?');

@@ -192,11 +192,21 @@ COORD_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["t
 # ════════════════════════════════════════════════════════════════════════════
 # Configuración
 # ════════════════════════════════════════════════════════════════════════════
+BOTS_FILE = "deploy/bots.json"
+# Keiner (Trend Rider 4h) y Celeste (Tortuga 55 diario) con todos los agentes; Nathalia (Bot Oficial 1h, perdedor
+# en el backtest) solo en el resumen y con la pausa del vigía.
+DEFAULT_BOT_DBS = ("data/trend_state.db|deploy/trend_params.json|4h,"
+                   "data/tortuga_state.db|deploy/tortuga_params.json|1d,"
+                   "data/trading_state.db||1h|solo_resumen")
+# Laboratorio en sombra de cada estrategia con analista (20 pares; Tortuga también con oro tokenizado)
+DEFAULT_LAB = "deploy/trend_params.json|4h,deploy/tortuga_params.json|1d|" + LAB_SYMBOLS.replace(",", " ") + " PAXGUSDT"
+
 @dataclass
 class BotRef:
     db: str
     params_path: str = ""
     interval: str = "4h"
+    full: bool = True                       # False ("solo_resumen"): sin analista, salidas ni auditor
 
     @property
     def key(self) -> str:
@@ -211,7 +221,7 @@ class BotRef:
 
     @property
     def label(self) -> str:
-        return "Trend Rider" if "trend" in self.key else "Oficial"
+        return bot_names().get(self.key) or profile_label(self.profile)
 
     def params(self) -> q.Params:
         return parse_params_file(self.params_path)
@@ -221,9 +231,29 @@ def profile_key(params_path: str, interval: str) -> str:
     return f"{Path(params_path).stem if params_path else 'oficial'}_{interval}"
 
 
+def bot_names(path: str | Path = BOTS_FILE) -> dict[str, str]:
+    """Nombre de base (trend_state) y perfil (trend_params_4h) -> "Keiner · Trend Rider", según deploy/bots.json."""
+    try:
+        bots = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for b in bots if isinstance(bots, list) else []:
+        if not isinstance(b, dict) or not b.get("db"):
+            continue
+        name = " · ".join(x for x in (b.get("trader"), b.get("name")) if x) or Path(b["db"]).stem
+        out[Path(b["db"]).stem] = name
+        out[profile_key(b.get("params") or "", b.get("interval") or "1h")] = name
+    return out
+
+
 def profile_label(profile: str) -> str:
+    known = bot_names().get(profile)
+    if known:
+        return known
     name, _, interval = profile.rpartition("_")
-    return {"trend_params": "Trend Rider", "oficial": "Oficial"}.get(name, name) + f" {interval}"
+    return {"trend_params": "Trend Rider", "tortuga_params": "Tortuga 55", "oficial": "Oficial"}.get(name, name) \
+        + f" {interval}"
 
 
 @dataclass
@@ -259,27 +289,28 @@ def parse_params_file(path: str) -> q.Params:
 
 
 def parse_bots(raw: str) -> list[BotRef]:
-    """AI_BOT_DBS: 'ruta|params|intervalo' separados por coma.
-    Por defecto solo Trend Rider: data/trend_state.db|deploy/trend_params.json|4h"""
+    """AI_BOT_DBS: 'ruta|params|intervalo[|solo_resumen]' separados por coma (ver DEFAULT_BOT_DBS).
+    solo_resumen: el bot sale en el resumen diario y respeta la pausa del vigía, pero sin analista, salidas ni
+    auditor (así no gasta en un bot que no se va a usar con dinero)."""
     out = []
     for item in raw.split(","):
         parts = [x.strip() for x in item.split("|")]
         if parts and parts[0]:
             out.append(BotRef(parts[0], parts[1] if len(parts) > 1 else "", parts[2] if len(parts) > 2 and parts[2]
-                              else "4h"))
+                              else "4h", full=not (len(parts) > 3 and parts[3].lower() == "solo_resumen")))
     return out
 
 
 @dataclass
 class AgentSettings:
-    bots: list[BotRef] = field(default_factory=lambda: parse_bots("data/trend_state.db|deploy/trend_params.json|4h"))
+    bots: list[BotRef] = field(default_factory=lambda: parse_bots(DEFAULT_BOT_DBS))
     analyst_mode: str = "escalera"          # off | sombra (nunca gana permisos) | escalera
     autonomy_max: int = 3                   # escalones que puede ganar: 0 ninguno, 1 veto, 2 +reducir, 3 +salida
     exits: bool = True                      # guardián de salidas
     exit_hours: float = 24.0
     exit_min_r: float = 1.0                 # solo se le pregunta por posiciones que ya ganan al menos 1 R
     lab: bool = True
-    lab_profiles: list[LabProfile] = field(default_factory=lambda: [LabProfile("deploy/trend_params.json", "4h")])
+    lab_profiles: list[LabProfile] = field(default_factory=lambda: parse_lab(DEFAULT_LAB))
     lab_dir: str = "data/sombra"
     vigia: bool = True
     vigia_hours: float = 4.0
@@ -336,6 +367,8 @@ class AgentSettings:
         """perfil -> bots reales, base del laboratorio, parámetros y temporalidad."""
         out: dict[str, dict] = {}
         for b in self.bots:
+            if not b.full:
+                continue
             d = out.setdefault(b.profile, {"real": [], "lab_db": None, "params_path": b.params_path,
                                            "interval": b.interval})
             d["real"].append(b)
@@ -587,7 +620,7 @@ class AIGate:
         settings = AgentSettings.from_env()
         store = AIStore(cfg.db_path)
         ref = next((b for b in settings.bots if Path(b.db).resolve() == Path(db_path).resolve()), None)
-        mode = settings.analyst_mode if ref is not None else "off"
+        mode = settings.analyst_mode if ref is not None and ref.full else "off"
         return cls(bot, store, AIClient(cfg, store, clock=clock), mode, Telegram.from_env(), clock, interval,
                    profile=ref.profile if ref else bot, settings=settings)
 
@@ -931,6 +964,11 @@ class AgentService:
         pnl = units * (price - pos["entry_price"]) * d - units * (pos["entry_price"] + price) * fee
         return pnl / pos["risk_usd"]
 
+    def exit_wait(self, interval: str) -> timedelta:
+        """Entre dos preguntas por la misma posición: AI_SALIDA_HORAS, y al menos 3 velas (72 h en diario)."""
+        from market_fetcher import INTERVAL_MS
+        return max(timedelta(hours=self.s.exit_hours), timedelta(milliseconds=3 * INTERVAL_MS.get(interval, 0)))
+
     def exit_votes(self, now: datetime) -> dict:
         if not (self.s.exits and self.s.analyst_mode != "off" and self.client.available):
             return {"skipped": True}
@@ -949,7 +987,7 @@ class AgentService:
                     "ORDER BY id", (profile, ref))]
                 if any(r["decision"] == "SALIR" for r in prev):
                     continue                          # ya pidió salir: se mide esa primera petición
-                if prev and now - datetime.fromisoformat(prev[-1]["at"]) < timedelta(hours=self.s.exit_hours):
+                if prev and now - datetime.fromisoformat(prev[-1]["at"]) < self.exit_wait(prof["interval"]):
                     continue
                 try:
                     price = float(self.price_source(pos["symbol"]))
@@ -1085,7 +1123,7 @@ class AgentService:
         if not self.client.available:
             return 0
         for bot in self.s.bots:
-            sm = self._bot_sm(bot)
+            sm = self._bot_sm(bot) if bot.full else None
             if sm is None:
                 continue
             try:
@@ -1140,7 +1178,7 @@ class AgentService:
         since = iso(now - timedelta(days=7))
         month_start = iso(now.replace(day=1, hour=0, minute=0, second=0))
         for bot in self.s.bots:
-            sm = self._bot_sm(bot)
+            sm = self._bot_sm(bot) if bot.full else None
             if sm is None:
                 continue
             try:
@@ -1465,10 +1503,11 @@ class AgentService:
 COST_ASSUMPTIONS = {
     "vigia": (180, 1500, {"low": 600, "medium": 1200, "high": 2500}),
     "coordinador": (30, 2500, {"low": 800, "medium": 1200, "high": 2000}),
-    "analista": (15, 2500, {"low": 700, "medium": 1500, "high": 3000}),
-    "salida": (60, 2000, {"low": 600, "medium": 1200, "high": 2500}),
-    "auditor": (3, 3000, {"low": 800, "medium": 1500, "high": 3000}),
-    "auditor_semanal": (4.3, 6000, {"low": 1500, "medium": 2000, "high": 4000}),
+    # Keiner (Trend Rider 4h) + Celeste (Tortuga 55 diario), cada uno con su laboratorio de 20 pares
+    "analista": (18, 2500, {"low": 700, "medium": 1500, "high": 3000}),
+    "salida": (85, 2000, {"low": 600, "medium": 1200, "high": 2500}),
+    "auditor": (4, 3000, {"low": 800, "medium": 1500, "high": 3000}),
+    "auditor_semanal": (8.6, 6000, {"low": 1500, "medium": 2000, "high": 4000}),
 }
 
 

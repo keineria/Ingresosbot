@@ -16,8 +16,8 @@ solas cada 15 segundos (los contadores de "hace X" y "próxima vela en X" se mue
 | **Posiciones abiertas** | Entrada → precio actual, ganancia o pérdida sin cerrar, stop loss y si ya va con trailing o Break-Even. |
 | **Últimas operaciones** | Las 3 últimas cerradas, con su resultado en $ y en R. |
 
-Cada bot lleva un **nombre de persona** (campo `trader` en `deploy/bots.json`): Juan opera el Bot Oficial, Keiner
-opera Trend Rider y Óscar opera Tortuga 55. Se cambian editando ese campo; el nombre de la estrategia (`name`) sigue
+Cada bot lleva un **nombre de persona** (campo `trader` en `deploy/bots.json`): Nathalia opera el Bot Oficial, Keiner
+opera Trend Rider y Celeste opera Tortuga 55. Se cambian editando ese campo; el nombre de la estrategia (`name`) sigue
 debajo para no perder la referencia.
 
 Debajo de las tarjetas sigue la **Cadena de decisión** (Datos → Capa 1 → Capa 2 → Capa 3 → Ejecución), con un

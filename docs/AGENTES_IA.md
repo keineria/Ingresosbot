@@ -13,6 +13,17 @@ claves del exchange. Si la IA falla, tarda o se acaba el presupuesto, los bots s
 | Auditor | Revisa cada operación cerrada; el domingo hace un informe semanal | Proponer **1 cambio de parámetro al mes**. Se prueba en el laboratorio y lo aplicas tú a mano |
 | Coordinador | Resumen del día por Telegram a las 20:00 (Colombia) | Nada. Las cifras las pone el código |
 
+## Qué bot tiene qué
+
+| Bot | Estrategia | Agentes |
+|---|---|---|
+| **Keiner** | Trend Rider (4 h) | Todos: vigía, analista, guardián de salidas, auditor y resumen, con su laboratorio de 20 pares |
+| **Celeste** | Tortuga 55 (diario) | Todos, con su laboratorio de 20 pares más oro (PAXG). El guardián le pregunta cada 3 días, no cada día |
+| **Nathalia** | Bot Oficial (1 h) | Solo el resumen diario y la pausa del vigía. Pierde en el backtest y hace muchas señales: ponerle el analista con Opus costaría más de lo que aporta |
+
+Los nombres salen del campo `trader` de `deploy/bots.json`. Para cambiar qué bots vigila la IA: `AI_BOT_DBS` en
+`.env` (ver `.env.example`).
+
 Lo que sigue siendo código, sin IA: los datos de mercado, la Capa 1 (circuit breaker), la Capa 2 (régimen), la
 Capa 3 (riesgo ATR) y la ejecución. Aunque la IA pida algo, quien abre y cierra es `bot_runner.py`.
 
@@ -43,11 +54,12 @@ cerrar antes (por defecto 3).
 
 ### Laboratorio en sombra
 
-Trend Rider hace unas 2 operaciones al mes con 3 pares: juntar 50 votos con resultado tardaría años. Por eso el
-servicio de IA corre, al lado, el mismo Trend Rider sobre **20 pares** (BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX,
-LINK, LTC, DOT, TRX, BCH, NEAR, ATOM, UNI, XLM, ETC, FIL, APT) con dinero ficticio, en `data/sombra/`. No envía
-alertas y nunca obedece a la IA, así cada voto tiene un resultado limpio. Se esperan unas 15 señales al mes:
-**el primer permiso podría ganarse en 4 a 6 meses**, y solo si la IA de verdad acierta.
+Trend Rider hace unas 2 operaciones al mes con 3 pares, y Tortuga 55 unas 10 al año: juntar 50 votos con
+resultado tardaría años. Por eso el servicio de IA corre, al lado, las mismas estrategias sobre **20 pares** (BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX,
+LINK, LTC, DOT, TRX, BCH, NEAR, ATOM, UNI, XLM, ETC, FIL, APT; Tortuga también PAXG) con dinero ficticio, en
+`data/sombra/`. No envía alertas y nunca obedece a la IA, así cada voto tiene un resultado limpio. Cada estrategia
+gana sus permisos por separado. Se esperan unas 15 señales al mes en Trend Rider (**el primer permiso podría
+ganarse en 4 a 6 meses**, y solo si la IA de verdad acierta) y unas 3 en Tortuga 55 (más de un año).
 
 ### La IA aprende de sus errores
 
@@ -58,12 +70,15 @@ cómo va BTC (rendimiento a 1, 7 y 30 días y si está sobre su media de 200 dí
 
 | Potencia (`AI_POTENCIA`) | Modelos | USD/mes aprox. | Tope por defecto | Sobre 500 USD de capital |
 |---|---|---|---|---|
-| economica | Sonnet en entradas y auditoría, Haiku en el resto | 0.65 | 2 | 0.13% al mes |
-| **equilibrada** (por defecto) | **Opus** en entradas y auditoría semanal, Sonnet en salidas | 2.60 | 5 | 0.5% al mes |
-| maxima | Opus en casi todo | 6.80 | 12 | 1.4% al mes |
+| economica | Sonnet en entradas y auditoría, Haiku en el resto | 0.90 | 2 | 0.18% al mes |
+| **equilibrada** (por defecto) | **Opus** en entradas y auditoría semanal, Sonnet en salidas | 3.70 | 5 | 0.74% al mes |
+| maxima | Opus en casi todo | 9.00 | 12 | 1.8% al mes |
 
-Trend Rider ganó en el backtest de 2024-2026 alrededor de 1.2% al mes. La potencia "maxima" se comería casi todo
-ese beneficio con 500 USD; por eso la recomendada es "equilibrada", que pone el modelo más potente donde más pesa
+Precios con Keiner y Celeste vigilados. En equilibrada: analista Opus 5.5 ~1.26, guardián de salidas Sonnet 5.5
+~1.36, auditoría semanal Opus 5.5 ~0.89, y vigía, auditor por operación y resumen (Haiku 5.5 y Sonnet 5.5) ~0.18.
+
+Trend Rider y Tortuga 55 ganaron en el backtest de 2024-2026 alrededor de 1.2% al mes. La potencia "maxima" se
+comería más de lo que ganan con 500 USD; por eso la recomendada es "equilibrada", que pone el modelo más potente donde más pesa
 (la decisión de entrar). Para ver el precio con datos reales, después de una semana de uso:
 
 ```bash
@@ -101,12 +116,16 @@ diario con las cifras. Cada llamada queda anotada con su costo en `data/ai_state
    ```
 
 4. Baja con las flechas hasta el final. Si no ves la sección `Agentes de IA`, pega el bloque de `.env.example`
-   al final; si ya está, cambia solo estas dos líneas:
+   al final; si ya está, cambia solo estas líneas:
 
    ```
    AI_ENABLED=true
    ANTHROPIC_API_KEY=sk-ant-...tu clave...
+   AI_POTENCIA=equilibrada
+   AI_BOT_DBS=
    ```
+
+   (`AI_BOT_DBS` vacío = Keiner y Celeste con todos los agentes, Nathalia solo con el resumen.)
 
 5. Guarda con **Ctrl+O** y luego **Enter**; sal con **Ctrl+X**.
 
@@ -123,7 +142,7 @@ Debe decir `OK: respondió anthropic/claude-haiku-5-5 · costo 0.0000xx USD`. Si
 
 ```bash
 sudo systemctl enable --now ingresosbot-ai
-sudo systemctl restart ingresosbot ingresosbot-trend ingresosbot-web
+sudo systemctl restart ingresosbot ingresosbot-trend ingresosbot-tortuga ingresosbot-web
 ```
 
 El reinicio de los bots hace que lean `AI_ENABLED=true` y empiecen a consultar al analista en cada señal. El
@@ -151,7 +170,8 @@ A Telegram te llegan mensajes que empiezan por 🤖.
 - **Quitar permiso / Devolver permiso**: en los mensajes de la escalera.
 - **Probar en laboratorio / Descartar**: cuando el auditor propone un cambio. "Probar" corre el bot con los
   parámetros actuales y con el cambio en ventanas de 3 meses de 2024-2026 y te manda el resultado. El cambio
-  **nunca se aplica solo**: si te convence, se edita `deploy/trend_params.json` y se reinicia el bot.
+  **nunca se aplica solo**: si te convence, se edita `deploy/trend_params.json` (o `deploy/tortuga_params.json`)
+  y se reinicia el bot.
 
 Solo se aceptan botones del chat de `TELEGRAM_CHAT_ID`. Los mismos datos están en el panel: `GET /api/ai`, y las
 pausas y permisos se pueden cambiar con `POST /api/ai/decide`.
@@ -159,7 +179,7 @@ pausas y permisos se pueden cambiar con `POST /api/ai/decide`.
 ## Apagarlos
 
 - Todo: `AI_ENABLED=false` en `.env`, luego `sudo systemctl disable --now ingresosbot-ai` y
-  `sudo systemctl restart ingresosbot ingresosbot-trend`.
+  `sudo systemctl restart ingresosbot ingresosbot-trend ingresosbot-tortuga`.
 - Que nunca actúen, solo opinen: `AI_AUTONOMIA_MAX=0` (o `AI_ANALISTA=sombra`) y reiniciar los bots e
   `ingresosbot-ai`.
 - Solo una parte: `AI_SALIDAS=false`, `AI_LAB=false`, `AI_VIGIA=false`, `AI_AUDITOR=false` o

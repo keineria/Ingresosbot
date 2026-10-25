@@ -4,6 +4,7 @@ import logging
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -762,6 +763,40 @@ class TestPanelApi(unittest.TestCase):
                 self.assertEqual(app.ai_state()["escalera"][0]["status"], "revocado")
                 store.close()
                 app._ai_svc.store.close()
+
+
+class TestBotCoverage(unittest.TestCase):
+    """Keiner (Trend Rider) y Celeste (Tortuga 55) con todos los agentes; Nathalia (Oficial) solo en el resumen."""
+
+    def test_defaults_cover_three_bots(self):
+        s = ag.AgentSettings()
+        self.assertEqual([(b.key, b.full) for b in s.bots],
+                         [("trend_state", True), ("tortuga_state", True), ("trading_state", False)])
+        self.assertEqual(list(s.profiles()), ["trend_params_4h", "tortuga_params_1d"])
+        tortuga_lab = s.lab_profiles[1]
+        self.assertEqual((tortuga_lab.interval, len(tortuga_lab.symbols)), ("1d", 21))
+        self.assertIn("PAXGUSDT", tortuga_lab.symbols)
+
+    def test_names_come_from_bots_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "bots.json"
+            f.write_text(json.dumps([{"db": "data/tortuga_state.db", "name": "Tortuga 55", "trader": "Celeste",
+                                      "params": "deploy/tortuga_params.json", "interval": "1d"},
+                                     {"db": "data/trading_state.db", "name": "Bot Oficial", "trader": "Nathalia"}]))
+            names = ag.bot_names(f)
+        self.assertEqual(names["tortuga_state"], "Celeste · Tortuga 55")
+        self.assertEqual(names["tortuga_params_1d"], "Celeste · Tortuga 55")
+        self.assertEqual(names["oficial_1h"], "Nathalia · Bot Oficial")
+        self.assertEqual(ag.bot_names(Path("/no/existe.json")), {})
+
+    def test_summary_only_bot_has_no_analyst(self):
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.dict("os.environ", {
+                "AI_ENABLED": "true", "AI_DB": str(Path(tmp) / "ai.db"), "ANTHROPIC_API_KEY": "x",
+                "AI_BOT_DBS": "data/trend_state.db|deploy/trend_params.json|4h,data/trading_state.db||1h|solo_resumen"}):
+            self.assertEqual(ag.AIGate.from_env("data/trading_state.db", "1h").analyst_mode, "off")
+            gate = ag.AIGate.from_env("data/trend_state.db", "4h")
+            self.assertEqual((gate.analyst_mode, gate.profile), ("escalera", "trend_params_4h"))
+            self.assertIsNotNone(gate.store)            # la pausa del vigía sigue aplicando a todos
 
 
 if __name__ == "__main__":
