@@ -30,6 +30,7 @@ Uso:
   python intraday_lab.py walk --csv-dir data/candles --interval 15m --balance 500 --trade-from 2024-01-01
   python intraday_lab.py download --csv-dir data/lab_velas --intervals 15m,1h,4h --since 2023-01-01
   python intraday_lab.py full --csv-dir data/lab_velas --out-dir data/lab_momentos --workers 2
+  python intraday_lab.py round2 --csv-dir data/lab_velas --out-dir data/lab_ronda2 --workers 2   # filtros sobre Trend Rider
 """
 
 from __future__ import annotations
@@ -269,6 +270,8 @@ def _signal(f: pd.DataFrame, c: dict) -> np.ndarray:
         raise ValueError(c["trigger"])
     if c.get("hours"):
         sig &= f.hour.isin(c["hours"]).to_numpy()
+    if c.get("weekdays"):
+        sig &= f.weekday.isin(c["weekdays"]).to_numpy()
     if c.get("min_atr_rank"):
         sig &= (f.atr_rank >= c["min_atr_rank"]).to_numpy()
     return sig & f.atr14.notna().to_numpy() & (f.atr14 > 0).to_numpy()
@@ -388,6 +391,8 @@ def combo_label(c: dict) -> str:
         parts.append(f"horas {_hours_label(c['hours'])}")
     if c.get("tp_atr"):
         parts.append(f"TP {c['tp_atr']:g}")
+    if c.get("weekdays"):
+        parts.append("días " + ",".join(WEEKDAYS[d] for d in c["weekdays"]))
     return " · ".join(parts)
 
 
@@ -646,9 +651,202 @@ def run_full(csv_dir: str, symbols, intervals, out_dir: str, trade_from: str, ba
     return text
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# RONDA 2: FILTROS DE ACIERTO SOBRE TREND RIDER (motor real)
+# ════════════════════════════════════════════════════════════════════════════
+TREND_BASE_FILE = Path(__file__).resolve().parent / "deploy" / "trend_params.json"
+
+
+def _trend_base() -> dict:
+    for path in (TREND_BASE_FILE, Path("deploy/trend_params.json")):
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    return {"strategy": "trend", "trend_entry": "breakout", "donchian_len": 20, "trend_sl_atr_mult": 2.0,
+            "trail_atr_mult": 5.0, "daily_sma_len": 200, "price_tick": 0.0001}
+
+
+# Variantes: la recomendada de Trend Rider y un filtro (o dos) cada vez, con sus vecinos.
+TREND_FILTERS = {
+    "4h": [{}, {"trend_min_vol_ratio": 1.0}, {"trend_min_vol_ratio": 1.3}, {"trend_min_vol_ratio": 1.6},
+           {"trend_min_atr_rank": 0.33}, {"trend_min_atr_rank": 0.5}, {"trend_max_ext_atr": 2.0},
+           {"trend_max_ext_atr": 3.0}, {"trend_min_vol_ratio": 1.3, "trend_min_atr_rank": 0.33},
+           {"trend_min_vol_ratio": 1.0, "trend_max_ext_atr": 3.0}],
+    # En 1h: misma ruptura de 4h vista con velas de 1h (Donchian 80 = 20 velas de 4h) y filtros.
+    "1h": [{}, {"donchian_len": 80}, {"donchian_len": 80, "trend_min_vol_ratio": 1.3},
+           {"donchian_len": 80, "trend_max_ext_atr": 2.0}, {"trend_min_vol_ratio": 1.3},
+           {"trend_min_atr_rank": 0.5}, {"trend_max_ext_atr": 2.0}],
+}
+
+
+def trend_label(extra: dict) -> str:
+    if not extra:
+        return "Trend Rider recomendada (sin filtros)"
+    names = {"trend_min_vol_ratio": "volumen ≥ {:g}x", "trend_min_atr_rank": "volatilidad ≥ p{:.0f}",
+             "trend_max_ext_atr": "estiramiento ≤ {:g} ATR", "donchian_len": "Donchian {:g}"}
+    return " · ".join(names[k].format(v * 100 if k == "trend_min_atr_rank" else v) for k, v in extra.items())
+
+
+def trend_attribution(data: dict[str, pd.DataFrame], interval: str, trade_from: str, balance: float = 500.0) -> str:
+    """Cada trade de Trend Rider (motor real, par por par) con las variables de su vela de señal:
+    ¿qué valores separan a los trades ganadores de los perdedores?"""
+    import backtester as bt
+    p = bt._params_for(q.Params(price_tick=0.0001), _trend_base())
+    step = pd.Timedelta(hours=1 / BARS_PER_HOUR[interval])
+    rows = []
+    for s, df in data.items():
+        f = features(df, interval).set_index("time")
+        f["breakout_atr"] = (f.close - f.donchian_high) / f.atr14
+        out = bt.run_backtest(df, p, bt.BacktestConfig(balance), s, trade_from=trade_from)
+        for t in out["trades"]:
+            sig_t = pd.Timestamp(t["opened_at"]) - step
+            if sig_t not in f.index:
+                continue
+            r = f.loc[sig_t]
+            rows.append({"symbol": s, "time": sig_t, "win": t["pnl_usd"] > 0, "pnl_pct": t["pnl_pct"],
+                         "r": t["r_multiple"], "vol_ratio": r.vol_ratio, "atr_rank": r.atr_rank, "ext_atr": r.ext_atr,
+                         "breakout_atr": r.breakout_atr, "rsi14": r.rsi14, "hour": int(r.hour),
+                         "weekday": WEEKDAYS[int(r.weekday)], "session": r.session})
+    t = pd.DataFrame(rows)
+    if t.empty:
+        return f"# Trades de Trend Rider ({interval})\n\nSin trades.\n"
+    mid = t.time.min() + (t.time.max() - t.time.min()) / 2
+    t["half"] = np.where(t.time < mid, 1, 2)
+    buckets = {
+        "volumen vs media 20": pd.cut(t.vol_ratio, [-1, 1.0, 1.3, 1.6, np.inf], labels=["<1x", "1-1.3x", "1.3-1.6x", ">1.6x"]),
+        "volatilidad (percentil ATR)": pd.cut(t.atr_rank, [-1, 1 / 3, 2 / 3, 1.01], labels=["baja", "media", "alta"]),
+        "estiramiento (Close-EMA20)/ATR": pd.cut(t.ext_atr, [-np.inf, 1, 2, 3, np.inf], labels=["<1", "1-2", "2-3", ">3"]),
+        "fuerza de la ruptura (ATR sobre el canal)": pd.cut(t.breakout_atr, [-np.inf, 0.25, 0.5, 1, np.inf],
+                                                            labels=["<0.25", "0.25-0.5", "0.5-1", ">1"]),
+        "RSI14": pd.cut(t.rsi14, [0, 60, 70, 80, 101], labels=["<60", "60-70", "70-80", ">80"]),
+        "sesión": t.session, "día": t.weekday,
+    }
+    lines = [f"# Trades de Trend Rider ({interval}) por variable de la vela de señal", "",
+             f"{len(t)} trades (par por par, motor real, desde {trade_from}): acierto {t.win.mean() * 100:.1f}%, "
+             f"resultado medio {t.pnl_pct.mean():+.2f}% por trade, R medio {t.r.mean():+.2f}.", "",
+             "Un filtro ayuda si quita filas con R medio negativo sin quitar las que pagan el sistema.", ""]
+    for name, b in buckets.items():
+        t["b"] = b.astype(str).values
+        g = t.groupby("b")
+        per = t.groupby(["b", "symbol"]).r.sum().unstack()
+        halves = t.groupby(["b", "half"]).r.mean().unstack()
+        lines += [f"## {name}", "", "| Valor | Trades | Acierto | Resultado medio | R medio | R total | Pares + | R 1.ª mitad | R 2.ª mitad |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+        for k, grp in g:
+            h1 = halves.loc[k].get(1, np.nan) if k in halves.index else np.nan
+            h2 = halves.loc[k].get(2, np.nan) if k in halves.index else np.nan
+            lines.append(f"| {k} | {len(grp)} | {grp.win.mean() * 100:.1f}% | {grp.pnl_pct.mean():+.2f}% | "
+                         f"{grp.r.mean():+.2f} | {grp.r.sum():+.1f} | {int((per.loc[k] > 0).sum())}/{per.shape[1]} | "
+                         f"{h1:+.2f} | {h2:+.2f} |")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _groups(symbols) -> list[tuple[str, ...]]:
+    return [g for k in (2, 3) for g in itertools.combinations(symbols, k)]
+
+
+def _port_task(args):
+    import backtester as bt
+    extra, group, interval, trade_from, balance = args
+    p = bt._params_for(q.Params(price_tick=0.0001), dict(_trend_base(), **extra))
+    data = {s: _PORT_DATA[s] for s in group}
+    r = bt.run_portfolio_backtest(data, p, bt.BacktestConfig(balance), trade_from=trade_from)["report"]
+    return {"ret": r["net_return_pct"], "dd": r["max_drawdown_pct"], "trades": r["trades"],
+            "win": r["win_rate_pct"] or 0.0, "by_year": r["by_year"], "fees": r["total_fees_usd"]}
+
+
+_PORT_DATA: dict = {}
+
+
+def _init_port(data):
+    global _PORT_DATA
+    _PORT_DATA = data
+
+
+def trend_filter_grid(data: dict[str, pd.DataFrame], interval: str, trade_from: str, balance: float = 500.0,
+                      variants: list[dict] | None = None, workers: int | None = None, progress=print) -> pd.DataFrame:
+    """Cada variante en las 20 combinaciones de 2 y 3 pares con UNA cuenta (run_portfolio_backtest: Capa 1 → 2 → 3)."""
+    variants = variants if variants is not None else TREND_FILTERS.get(interval, TREND_FILTERS["4h"])
+    groups = _groups(list(data))
+    tasks = [(v, g, interval, trade_from, balance) for v in variants for g in groups]
+    t0 = time.time()
+    with ProcessPoolExecutor(max_workers=workers, initializer=_init_port, initargs=(data,)) as pool:
+        res = list(pool.map(_port_task, tasks))
+    rows = []
+    for v in variants:
+        rs = [r for (vv, *_), r in zip(tasks, res) if vv is v]
+        years = sorted({y for r in rs for y in r["by_year"]})
+        row = {"variante": trend_label(v), "ret_medio_%": np.mean([r["ret"] for r in rs]),
+               "grupos_+": f"{sum(r['ret'] > 0 for r in rs)}/{len(rs)}", "peor_%": min(r["ret"] for r in rs),
+               "dd_medio_%": np.mean([r["dd"] for r in rs]), "trades_medio": np.mean([r["trades"] for r in rs]),
+               "acierto_%": np.mean([r["win"] for r in rs]), "comisiones_medio": np.mean([r["fees"] for r in rs]),
+               "params": json.dumps(v)}
+        for y in years:
+            row[f"usd_{y}"] = np.mean([r["by_year"].get(y, 0.0) for r in rs])
+        rows.append(row)
+    progress(f"[trend {interval}] {len(tasks)} backtests en {time.time() - t0:.0f} s")
+    return pd.DataFrame(rows).round(2)
+
+
+def trend_grid_md(t: pd.DataFrame, interval: str) -> str:
+    years = [c for c in t.columns if c.startswith("usd_")]
+    lines = [f"# Filtros de acierto sobre Trend Rider ({interval}), 20 combinaciones de pares, una cuenta de 500 USD", "",
+             "| Variante | Retorno medio | Grupos + | Peor grupo | DD medio | Trades | Acierto | Comisiones | " +
+             " | ".join(f"USD {c[4:]}" for c in years) + " |", "|---|---|---|---|---|---|---|---|" + "---|" * len(years)]
+    for _, r in t.iterrows():
+        lines.append(f"| {r.variante} | {r['ret_medio_%']:+.1f}% | {r['grupos_+']} | {r['peor_%']:+.1f}% | "
+                     f"{r['dd_medio_%']:.1f}% | {r.trades_medio:.0f} | {r['acierto_%']:.1f}% | {r.comisiones_medio:.1f} | " +
+                     " | ".join(f"{r[c]:+.1f}" for c in years) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def weekend_test(data: dict[str, pd.DataFrame], interval: str, trade_from: str, balance: float = 500.0) -> str:
+    """La pista de la ronda 1 (caídas de 4h los fines de semana), con reglas fijas y por mitades."""
+    feats = {s: features(df, interval) for s, df in data.items()}
+    t_end = max(f.time.max() for f in feats.values())
+    mid = pd.Timestamp(trade_from, tz="UTC") + (t_end - pd.Timestamp(trade_from, tz="UTC")) / 2
+    combos = [dict(DEFAULT_COMBO, max_bars=4, sl_atr=2.5, weekdays=w) for w in ([6], [5, 6], [5], None)]
+    lines = [f"# Caídas en tendencia por día ({interval}), RSI2<10, salida SMA5, SL 2.5, máx 4 velas", "",
+             f"Mitades: {trade_from} → {mid:%Y-%m-%d} y {mid:%Y-%m-%d} → {t_end:%Y-%m-%d}.", "",
+             "| Días | Mitad | " + " | ".join(feats) + " | Trades | Acierto | Neto/trade |",
+             "|---|---|" + "---|" * len(feats) + "---|---|---|"]
+    for c in combos:
+        for name, a, b in (("1.ª", trade_from, mid), ("2.ª", mid, None), ("todo", trade_from, None)):
+            rs = {s: simulate(f, c, balance, a, b) for s, f in feats.items()}
+            tr = pd.concat([r["trades_df"] for r in rs.values() if len(r["trades_df"])] or [pd.DataFrame()])
+            days = ",".join(WEEKDAYS[d] for d in c["weekdays"]) if c.get("weekdays") else "todos"
+            lines.append(f"| {days} | {name} | " + " | ".join(f"{r['return_pct']:+.2f}%" for r in rs.values()) +
+                         f" | {len(tr)} | {(tr.pnl > 0).mean() * 100 if len(tr) else 0:.1f}% | "
+                         f"{tr.ret_pct.mean() if len(tr) else 0:+.3f}% |")
+    return "\n".join(lines) + "\n"
+
+
+def run_round2(csv_dir: str, symbols, out_dir: str, trade_from: str, balance: float, workers: int | None) -> str:
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    parts = [f"# Ronda 2 — filtros de acierto sobre Trend Rider ({pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC)", ""]
+    for iv in ("4h", "1h"):
+        t0 = time.time()
+        data = load(csv_dir, symbols, iv)
+        att = trend_attribution(data, iv, trade_from, balance)
+        (out / f"trades_trend_{iv}.md").write_text(att, encoding="utf-8")
+        g = trend_filter_grid(data, iv, trade_from, balance, workers=workers, progress=lambda m: print(m, file=sys.stderr))
+        g.to_csv(out / f"filtros_trend_{iv}.csv", index=False)
+        md = trend_grid_md(g, iv)
+        (out / f"filtros_trend_{iv}.md").write_text(md, encoding="utf-8")
+        parts += [md, f"(tiempo {time.time() - t0:.0f} s)", ""]
+        print(f"[ronda2] {iv} listo en {time.time() - t0:.0f} s", file=sys.stderr)
+    wk = weekend_test(load(csv_dir, symbols, "4h"), "4h", trade_from, balance)
+    (out / "domingos_4h.md").write_text(wk, encoding="utf-8")
+    parts.append(wk)
+    text = "\n".join(parts)
+    (out / "RESUMEN_RONDA2.md").write_text(text, encoding="utf-8")
+    return text
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Laboratorio de momentos y estrategias de rebote en temporalidades menores.")
-    ap.add_argument("mode", choices=("download", "explore", "walk", "grid", "fixed", "full"))
+    ap.add_argument("mode", choices=("download", "explore", "walk", "grid", "fixed", "full", "round2"))
     ap.add_argument("--intervals", default="15m,1h,4h", help="download / full")
     ap.add_argument("--since", default="2023-01-01", help="download: primera vela")
     ap.add_argument("--out-dir", default="data/lab_momentos", help="full: carpeta de informes")
@@ -671,6 +869,9 @@ def main(argv=None) -> int:
     intervals = [x.strip() for x in a.intervals.split(",") if x.strip()]
     if a.mode == "download":
         print("\n".join(download(a.csv_dir, symbols, intervals, a.since)))
+        return 0
+    if a.mode == "round2":
+        print(run_round2(a.csv_dir, symbols, a.out_dir, a.trade_from, a.balance, a.workers))
         return 0
     if a.mode == "full":
         print(run_full(a.csv_dir, symbols, intervals, a.out_dir, a.trade_from, a.balance, a.workers))

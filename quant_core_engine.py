@@ -101,6 +101,11 @@ class Params:
     trend_allow_short: bool = False    # True solo en Futuros: ruptura bajista bajo la EMA200
     daily_sma_len: int = 0             # >0: filtro diario; LONG solo si el cierre diario de AYER > SMA de N días
     trend_exit_on_filter: bool = False  # True: cerrar la posición cuando el filtro diario se da la vuelta
+    # Filtros de acierto opcionales sobre la ruptura (0 = apagado). Solo endurecen la entrada; nunca la crean.
+    trend_min_vol_ratio: float = 0.0   # volumen de la vela de señal / media de volumen de 20 velas >= X
+    trend_min_atr_rank: float = 0.0    # percentil (0-1) del ATR% de la vela entre las últimas atr_rank_len >= X
+    trend_max_ext_atr: float = 0.0     # (Close - EMA20) / ATR <= X: no comprar una ruptura demasiado estirada
+    atr_rank_len: int = 180            # velas para el percentil de volatilidad (180 velas de 4h = 30 días)
 
     @property
     def min_candles(self) -> int:
@@ -222,11 +227,17 @@ def compute_indicators(df: pd.DataFrame, p: Params) -> pd.DataFrame:
         sma = daily_close.rolling(p.daily_sma_len).mean()
         sign = np.sign(daily_close - sma).shift(1).fillna(0.0)
         out["daily_trend"] = day.map(pd.Series(sign.values, index=pd.to_datetime(sign.index, utc=True))).fillna(0.0).values
+    # Variables de los filtros de acierto. Sin historia suficiente valen 0: un filtro encendido no deja entrar.
+    vol_mean = out["volume"].rolling(20).mean()
+    out["vol_ratio"] = (out["volume"] / vol_mean).where(vol_mean > 0).fillna(0.0)
+    atr_pct = out["atr14"] / out["close"]
+    out["atr_rank"] = atr_pct.rolling(p.atr_rank_len, min_periods=max(2, p.atr_rank_len // 3)).rank(pct=True).fillna(0.0)
+    out["ext_atr"] = ((out["close"] - out["ema20"]) / out["atr14"]).where(out["atr14"] > 0).fillna(0.0)
     return out
 
 
 INDICATOR_KEYS = ("close", "ema20", "ema50", "ema200", "rsi14", "atr14", "ema20_slope_pct",
-                  "donchian_high", "donchian_low", "daily_trend")
+                  "donchian_high", "donchian_low", "daily_trend", "vol_ratio", "atr_rank", "ext_atr")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -505,7 +516,9 @@ def trend_regime(ind: dict, p: Params) -> dict:
     both:     cualquiera de las dos.
     daily_filter: solo el filtro diario (comprado mientras el cierre diario de ayer > SMA de daily_sma_len días).
     Con daily_sma_len > 0 el filtro diario se exige además en cualquier modo.
-    Sin filtro de extensión en la ruptura: una ruptura suele ir estirada y es justo la que se quiere.
+    Sin filtro de extensión en la ruptura por defecto: una ruptura suele ir estirada y es justo la que se quiere.
+    Filtros de acierto opcionales (trend_min_vol_ratio, trend_min_atr_rank, trend_max_ext_atr): con valor > 0 se
+    exigen además en la ruptura; con 0 (por defecto) el perfil se comporta exactamente igual que sin ellos.
     """
     if p.trend_entry not in TREND_ENTRIES:
         raise ValueError(f"trend_entry debe ser uno de {TREND_ENTRIES} (recibido {p.trend_entry!r})")
@@ -526,6 +539,19 @@ def trend_regime(ind: dict, p: Params) -> dict:
                     "short_enabled": p.trend_allow_short}
     if p.trend_entry == "daily_filter":
         long_checks, short_checks = {}, {"short_enabled": p.trend_allow_short}
+    # Filtros de acierto (SKILL_4, opcionales): se exigen además de la regla de entrada, en largos y cortos.
+    if p.trend_min_vol_ratio > 0:
+        ok = float(ind.get("vol_ratio") or 0.0) >= p.trend_min_vol_ratio
+        long_checks[f"volume_ge_{p.trend_min_vol_ratio:g}x_avg20"] = ok
+        short_checks[f"volume_ge_{p.trend_min_vol_ratio:g}x_avg20"] = ok
+    if p.trend_min_atr_rank > 0:
+        ok = float(ind.get("atr_rank") or 0.0) >= p.trend_min_atr_rank
+        long_checks[f"atr_rank_ge_{p.trend_min_atr_rank:g}"] = ok
+        short_checks[f"atr_rank_ge_{p.trend_min_atr_rank:g}"] = ok
+    if p.trend_max_ext_atr > 0:
+        ext = float(ind.get("ext_atr") or 0.0)
+        long_checks[f"ext_le_{p.trend_max_ext_atr:g}atr"] = ext <= p.trend_max_ext_atr
+        short_checks[f"ext_ge_-{p.trend_max_ext_atr:g}atr"] = ext >= -p.trend_max_ext_atr
     daily_long = daily_short = True
     if p.daily_sma_len > 0:
         dt = float(ind.get("daily_trend") or 0.0)
@@ -691,7 +717,8 @@ def _manual_indicators(m: dict, p: Params) -> dict:
         ind["ema20_slope_pct"] = (ind["ema20"] / float(m["ema20_prev3"]) - 1.0) * 100.0
     else:
         raise ValueError("Modo manual: falta 'ema20_prev3' o 'ema20_slope_pct'.")
-    for k in ("donchian_high", "donchian_low", "daily_trend"):      # solo los necesita el perfil "trend"
+    for k in ("donchian_high", "donchian_low", "daily_trend",      # solo los necesita el perfil "trend"
+              "vol_ratio", "atr_rank", "ext_atr"):
         if k in m:
             ind[k] = float(m[k])
     return ind
