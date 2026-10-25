@@ -8,13 +8,32 @@ solas cada 15 segundos (los contadores de "hace X" y "próxima vela en X" se mue
 | Parte | Qué significa |
 |---|---|
 | **Funcionando / Apagado / Sin encender / Sin señal** | Si el proceso del bot está vivo. El bot deja un *latido* en su base cada 60 s; sin latido en 5 min el panel pregunta a systemd (`systemctl is-active`). |
-| **Capa 1 · Activo / Riesgo reducido / Detenido / Kill switch** | El Circuit Breaker de ese bot (racha de pérdidas y drawdown del día). |
+| **Capa 1 · Activo / Riesgo reducido / Detenido** | El Circuit Breaker de ese bot (racha de pérdidas y drawdown del día). |
+| **Apagado** | Lo apagaste con el botón **Apagar**: no abre operaciones nuevas. |
 | **Valor de la cuenta** | Balance + lo que van ganando o perdiendo las posiciones abiertas, con su % sobre el capital inicial de ese bot. |
 | **Pérdidas seguidas / Drawdown de hoy** | Lo que vigila la Capa 1: a las 3 pérdidas seguidas o 3% de caída en el día se detiene 15 velas. |
 | **Última vela / Próxima vela / Latido** | Cuándo decidió por última vez y cuándo vuelve a decidir (1h, 4h o 1 día según el bot). |
 | **Qué decidió en la última vela** | La decisión por par: Esperar, Comprar, Mantener… Pasa el ratón (o mantén el dedo) para ver qué filtro la bloqueó. |
 | **Posiciones abiertas** | Entrada → precio actual, ganancia o pérdida sin cerrar, stop loss y si ya va con trailing o Break-Even. |
 | **Últimas operaciones** | Las 3 últimas cerradas, con su resultado en $ y en R. |
+
+## Apagar o encender un bot
+
+Si ves que una estrategia rinde mejor que otra, cada tarjeta tiene un botón **Apagar**:
+
+1. Pulsa **Apagar** en la tarjeta del bot.
+2. Si tiene posiciones abiertas, elige qué hacer con ellas:
+   - **Dejarlas terminar**: siguen con su stop loss hasta que se cierren solas. Es lo recomendado.
+   - **Cerrarlas ya**: el bot las vende al precio actual en el próximo minuto y te avisa por Telegram.
+3. Confirma con **Apagar**.
+
+Mientras está apagado, el bot no abre operaciones nuevas y la IA deja de votar por él: no gasta en su analista, en su
+guardián de salidas, en su laboratorio ni en su auditoría semanal. El proceso sigue encendido, vigilando, para que
+puedas volver con **Encender** cuando quieras, sin tocar el servidor. Es el mismo interruptor que el Kill Switch
+del detalle, y queda anotado en el historial de control.
+
+Para apagarlo del todo en el servidor (no hace falta): `sudo systemctl disable --now SERVICIO`, con el servicio del
+campo `service` de `deploy/bots.json` (por ejemplo `ingresosbot-tortuga`).
 
 Cada bot lleva un **nombre de persona** (campo `trader` en `deploy/bots.json`): Nathalia opera el Bot Oficial, Keiner
 opera Trend Rider y Celeste opera Tortuga 55. Se cambian editando ese campo; el nombre de la estrategia (`name`) sigue

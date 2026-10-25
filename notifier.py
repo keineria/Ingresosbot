@@ -168,8 +168,15 @@ class Notifier:
 
     def kill_switch(self, result: dict, account: dict, reason: str = "", source: str = "api") -> bool:
         on = result["manual_halt"]
-        head = "🚨 KILL SWITCH ACTIVADO" if on else "▶️ KILL SWITCH DESACTIVADO"
-        tail = ("No se abrirán posiciones nuevas; las abiertas siguen con su SL/TP." if on else
+        if result.get("power"):                   # botón "Apagar / Encender" de las tarjetas del panel
+            head = "⏸️ BOT APAGADO" if on else "▶️ BOT ENCENDIDO"
+        else:
+            head = "🚨 KILL SWITCH ACTIVADO" if on else "▶️ KILL SWITCH DESACTIVADO"
+        n = result.get("open_positions") or 0
+        tail = (f"No se abrirán posiciones nuevas. Se cierran ya sus {result['close_requested']} posiciones al precio "
+                "actual." if on and result.get("close_requested") else
+                "No se abrirán posiciones nuevas; las abiertas siguen con su SL/TP." if on and n else
+                "No se abrirán posiciones nuevas." if on else
                 f"El estado vuelve a las reglas del Circuit Breaker: {result['status_after']}.")
         text = (f"{head}\n{result['status_before']} → {result['status_after']} (origen: {source})\n"
                 f"Motivo: {reason or 'sin motivo indicado'}\n{tail}\n"

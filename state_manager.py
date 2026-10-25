@@ -24,12 +24,15 @@ Uso típico (en vivo o en paper trading):
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import quant_core_engine as q
+
+CLOSE_ALL_KEY = "close_all_requested"      # runner_meta: el panel pide cerrar todo al apagar un bot
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS account_state (
@@ -246,6 +249,27 @@ class StateManager:
                                             "reasons": cb["reasons"]})
         return {"manual_halt": on, "status_before": a["status"], "status_after": cb["status"],
                 "reasons": cb["reasons"]}
+
+    def request_close_all(self, reason: str = "", source: str = "api") -> None:
+        """Pide al proceso del bot que cierre todas sus posiciones al precio actual (lo hace en su siguiente
+        vigilancia, ~1 min). Se usa al apagar un bot desde el panel."""
+        a = self.account()
+        self.meta_set(CLOSE_ALL_KEY, json.dumps({"at": _now(), "reason": reason, "source": source}))
+        self.conn.execute("INSERT INTO control_log (at, action, reason, source, status_before, status_after) "
+                          "VALUES (?, 'CLOSE_ALL_REQUESTED', ?, ?, ?, ?)",
+                          (_now(), reason, source, a["status"], a["status"]))
+        self.conn.commit()
+
+    def close_all_request(self) -> dict | None:
+        raw = self.meta_get(CLOSE_ALL_KEY)
+        try:
+            return json.loads(raw) if raw else None
+        except ValueError:
+            return {"reason": "", "source": "?"}
+
+    def cancel_close_all(self) -> None:
+        self.conn.execute("DELETE FROM runner_meta WHERE key = ?", (CLOSE_ALL_KEY,))
+        self.conn.commit()
 
     def control_log(self, limit: int = 20) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM control_log ORDER BY id DESC LIMIT ?", (limit,))]

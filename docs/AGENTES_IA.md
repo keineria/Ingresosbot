@@ -182,6 +182,8 @@ pausas y permisos se pueden cambiar con `POST /api/ai/decide`.
   `sudo systemctl restart ingresosbot ingresosbot-trend ingresosbot-tortuga`.
 - Que nunca actúen, solo opinen: `AI_AUTONOMIA_MAX=0` (o `AI_ANALISTA=sombra`) y reiniciar los bots e
   `ingresosbot-ai`.
+- Solo para un bot: el botón **Apagar** de su tarjeta en el panel. El bot deja de abrir operaciones y la IA deja de
+  votar por él (también en su laboratorio). Con **Encender** vuelve todo.
 - Solo una parte: `AI_SALIDAS=false`, `AI_LAB=false`, `AI_VIGIA=false`, `AI_AUDITOR=false` o
   `AI_RESUMEN=false` y reiniciar `ingresosbot-ai`.
 

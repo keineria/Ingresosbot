@@ -359,6 +359,12 @@
     .live ul.mini li .r { text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; }
     .live .none { font-size: 12.5px; color: var(--ink-3); padding: 2px 0; }
     .live footer { margin-top: auto; padding: 12px 16px 14px; display: flex; align-items: center; gap: 10px; }
+    .live footer .btns { display: flex; gap: 6px; flex: none; }
+    .live.off .lb, .live.off .lh .av { opacity: .55; }
+    .modal .choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--line-strong); border-radius: 12px; cursor: pointer; font-size: 13.5px; color: var(--ink-2); }
+    .modal .choice input { width: auto; height: auto; margin: 3px 0 0; }
+    .modal .choice b { display: block; color: var(--ink); font-weight: 600; }
+    .modal .choices { margin-bottom: 14px; }
     .live footer .sum { font-size: 12px; color: var(--ink-3); flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     .add-bot { border-style: dashed; box-shadow: none; background: transparent; padding: 18px 18px 16px; font-size: 13px; color: var(--ink-2); }
     .add-bot h3 { margin: 0 0 6px; font-size: 15px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
@@ -629,6 +635,19 @@
   </form>
 </div>
 
+<!-- Apagar / encender un bot desde su tarjeta -->
+<div id="power-modal" class="modal">
+  <form id="power-form">
+    <h3 id="power-title"></h3>
+    <p id="power-text"></p>
+    <div id="power-choices" class="choices">
+      <label class="choice"><input type="radio" name="power-pos" value="keep" checked><span><b id="power-keep">Dejarlas terminar</b>Siguen con su stop loss hasta que se cierren solas.</span></label>
+      <label class="choice"><input type="radio" name="power-pos" value="close"><span><b id="power-close">Cerrarlas ya</b>Se venden al precio actual en el próximo minuto.</span></label>
+    </div>
+    <div class="row"><button class="btn" type="button" id="power-cancel">Cancelar</button><button class="btn danger" type="submit" id="power-ok">Apagar</button></div>
+  </form>
+</div>
+
 <!-- Confirmación del kill switch -->
 <div id="kill-modal" class="modal">
   <form id="kill-form">
@@ -839,7 +858,7 @@
   function renderLog(items) {
     $('log-body').innerHTML = items.length ? items.map((e) => {
       const on = /_ON$/.test(e.action || '');
-      const label = e.action === 'KILL_SWITCH_ON' ? 'Kill switch activado' : e.action === 'KILL_SWITCH_OFF' ? 'Kill switch desactivado' : e.action;
+      const label = e.action === 'KILL_SWITCH_ON' ? 'Kill switch activado' : e.action === 'KILL_SWITCH_OFF' ? 'Kill switch desactivado' : e.action === 'CLOSE_ALL_REQUESTED' ? 'Cierre de posiciones pedido' : e.action;
       return `<li>${pill(label, on ? 's-bad' : 's-good')}<span class="muted num">${esc(localTime(e.at))}</span>
         <span>${esc(e.status_before)} → <b>${esc(e.status_after)}</b></span>
         ${e.reason ? `<span class="muted">“${esc(e.reason)}”</span>` : ''}<span class="faint">${esc(e.source || '')}</span></li>`;
@@ -1193,7 +1212,7 @@
   const HEALTH = { running: ['Funcionando', 's-good run'], stopped: ['Apagado', 's-bad'], never: ['Sin encender', 's-mute'],
                    stale: ['Sin señal', 's-warn'] };
   const healthOf = (b) => b.error ? ['Error', 's-bad'] : (HEALTH[b.runner && b.runner.health] || ['—', 's-mute']);
-  const l1Of = (b) => !b.account ? null : b.account.manual_halt ? ['Kill switch', 's-bad'] : (STATUS[b.account.status] || [b.account.status, 's-mute']);
+  const l1Of = (b) => !b.account ? null : b.account.manual_halt ? ['Apagado', 's-bad'] : (STATUS[b.account.status] || [b.account.status, 's-mute']);
   const short = (sym) => String(sym).replace(/USDT$/, '');
   const dur = (sec) => {
     sec = Math.max(0, Math.round(sec));
@@ -1351,9 +1370,11 @@
     const syms = (b.symbols || []).map(short).join(' · ');
     const head = `<header class="lh"><span class="av">${initial(b)}</span><div style="min-width:0"><h3>${esc(who(b))}</h3>
         <div class="meta">${b.trader ? '<b>' + esc(b.name) + '</b> · ' : ''}${esc(b.interval || '')}${syms ? ' · ' + esc(syms) : ''}</div></div>
-        <div class="pills">${pill(h[0], h[1])}${b.account ? pill('Capa 1 · ' + l1Of(b)[0], l1Of(b)[1], true) : ''}</div></header>`;
-    const foot = `<footer><span class="sum">${esc(b.summary || '')}</span>
-        <button type="button" class="btn sm" data-view="${esc(b.id)}">Ver detalle</button></footer>`;
+        <div class="pills">${pill(h[0], h[1])}${!b.account ? '' : b.account.manual_halt ? pill('Apagado', 's-bad', true) : pill('Capa 1 · ' + l1Of(b)[0], l1Of(b)[1], true)}</div></header>`;
+    const off = b.account && b.account.manual_halt;
+    const power = b.account ? `<button type="button" class="btn sm ${off ? 'resume' : ''}" data-power="${esc(b.id)}" title="${off ? 'Vuelve a abrir operaciones' : 'Deja de abrir operaciones'}"><svg class="i"><use href="#i-power"/></svg>${off ? 'Encender' : 'Apagar'}</button>` : '';
+    const foot = `<footer><span class="sum">${esc(off ? 'Apagado: no abre operaciones nuevas.' : (b.summary || ''))}</span>
+        <span class="btns">${power}<button type="button" class="btn sm" data-view="${esc(b.id)}">Ver detalle</button></span></footer>`;
     if (b.error) return `<article class="card live" style="--c:${c}">${head}<div class="lb"><div class="note bad">${esc(b.error)}</div></div>${foot}</article>`;
 
     const a = b.account, r = b.runner, lim = b.limits || {};
@@ -1386,7 +1407,7 @@
           <span class="s r">${t.r_multiple === null ? '' : signed(t.r_multiple) + ' R'}</span></li>`;
       }).join('')}</ul>` : '<div class="none">Todavía no ha cerrado operaciones.</div>';
 
-    return `<article class="card live" style="--c:${c}">${head}<div class="lb">
+    return `<article class="card live${off ? ' off' : ''}" style="--c:${c}">${head}<div class="lb">
       <div class="eq"><div><div class="lbl">Valor de la cuenta</div><div class="big num">${usd(b.equity)}</div></div>
         <div>${curve.length > 2 ? sparkColor(curve, c) : ''}</div>
         <div class="foot">${chip(b.return_pct)}<span>inicial ${esc(usd(a.initial_balance))}</span>
@@ -1418,7 +1439,39 @@
   }
 
   $('ov-grid').addEventListener('click', (ev) => {
+    const pw = ev.target.closest('button[data-power]'); if (pw) { askPower(pw.dataset.power); return; }
     const b = ev.target.closest('button[data-view]'); if (b) setView(b.dataset.view);
+  });
+
+  // Apagar / encender un bot: es el mismo interruptor que el Kill Switch del detalle, explicado para el día a día.
+  let powerBot = null;
+  function askPower(id) {
+    const b = ((overview && overview.bots) || []).find((x) => x.id === id); if (!b || !b.account) return;
+    const on = !b.account.manual_halt, n = (b.open_positions || []).length;
+    powerBot = { id, off: on };
+    $('power-title').textContent = (on ? '¿Apagar a ' : '¿Encender a ') + whoFull(b) + '?';
+    $('power-text').textContent = on
+      ? 'No abrirá operaciones nuevas y la IA deja de votar por él. El proceso sigue vigilando, así que puedes encenderlo cuando quieras.' + (n ? ` Tiene ${n} ${n === 1 ? 'posición abierta' : 'posiciones abiertas'}: ¿qué hago con ${n === 1 ? 'ella' : 'ellas'}?` : '')
+      : 'Vuelve a abrir operaciones cuando las 3 capas den luz verde. Si el Circuit Breaker está en pausa, espera a que termine.';
+    $('power-choices').classList.toggle('hidden', !(on && n));
+    $('power-keep').textContent = n === 1 ? 'Dejarla terminar' : 'Dejarlas terminar';
+    $('power-close').textContent = n === 1 ? 'Cerrarla ya' : 'Cerrarlas ya';
+    $('power-form').elements['power-pos'].value = 'keep';
+    $('power-ok').textContent = on ? 'Apagar' : 'Encender';
+    $('power-ok').className = 'btn ' + (on ? 'danger' : 'primary');
+    openModal('power-modal');
+  }
+  $('power-cancel').addEventListener('click', () => closeModal('power-modal'));
+  $('power-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault(); closeModal('power-modal');
+    if (!powerBot) return;
+    const close = powerBot.off && $('power-form').elements['power-pos'].value === 'close';
+    try {
+      const r = await api('/api/kill-switch?bot=' + encodeURIComponent(powerBot.id), { method: 'POST',
+        body: JSON.stringify({ action: powerBot.off ? 'halt' : 'resume', power: true, close_positions: close }) });
+      showError(!powerBot.off && r.status_after !== 'ACTIVE' ? 'Encendido, pero el Circuit Breaker lo mantiene en ' + r.status_after + ' hasta que termine su pausa.' : '');
+      refresh();
+    } catch (e) { showError(e.message); }
   });
 
   function sparkColor(vals, c) {
@@ -1538,7 +1591,7 @@
       refresh();
     } catch (e) { showError(e.message); }
   });
-  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeModal('kill-modal'); });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { closeModal('kill-modal'); closeModal('power-modal'); } });
 
   $('key-form').addEventListener('submit', (ev) => {
     ev.preventDefault();

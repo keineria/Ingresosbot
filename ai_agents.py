@@ -283,6 +283,28 @@ def parse_lab(raw: str) -> list[LabProfile]:
     return out
 
 
+def bot_off(db: str) -> bool:
+    """¿Keiner apagó este bot desde el panel (kill switch)? Entonces la IA deja de votar y de auditarlo."""
+    import sqlite3
+    if not db or not Path(db).exists():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{Path(db).resolve()}?mode=ro", uri=True, timeout=5.0)
+        try:
+            row = conn.execute("SELECT manual_halt FROM account_state WHERE id = 1").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    return bool(row and row[0])
+
+
+def profile_off(prof: dict | None) -> bool:
+    """Todos los bots reales de esa estrategia están apagados: su laboratorio tampoco gasta en IA."""
+    real = (prof or {}).get("real") or []
+    return bool(real) and all(bot_off(b.db) for b in real)
+
+
 def parse_params_file(path: str) -> q.Params:
     from bot_runner import parse_params
     return parse_params(path or None)
@@ -695,6 +717,8 @@ class AIGate:
         allow = {"allow": True, "scale": 1.0, "vote": None, "mode": self.analyst_mode, "reason": ""}
         if self.store is None or self.client is None or self.analyst_mode == "off":
             return allow
+        if self.lab and profile_off(self.settings.profiles().get(self.profile)):
+            return allow | {"reason": "bot apagado: la IA no vota"}
         try:
             row = self._get_vote(symbol, interval, result, df, f"{symbol}|{opened_at}")
             if row is None:
@@ -977,6 +1001,8 @@ class AgentService:
             "AND at >= ?", (iso(now - timedelta(hours=6)),)).fetchone() is not None
         asked, requested = 0, []
         for profile, prof in self.s.profiles().items():
+            if profile_off(prof):
+                continue                              # bot apagado desde el panel
             params = parse_params_file(prof["params_path"])
             for ref, item in self._open_positions(prof).items():
                 if asked >= MAX_EXIT_VOTES_PER_TICK:
@@ -1178,7 +1204,7 @@ class AgentService:
         since = iso(now - timedelta(days=7))
         month_start = iso(now.replace(day=1, hour=0, minute=0, second=0))
         for bot in self.s.bots:
-            sm = self._bot_sm(bot) if bot.full else None
+            sm = self._bot_sm(bot) if bot.full and not bot_off(bot.db) else None
             if sm is None:
                 continue
             try:

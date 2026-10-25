@@ -399,13 +399,22 @@ class DashboardApp:
         if action not in ("halt", "resume", "toggle"):
             raise ApiError(HTTPStatus.BAD_REQUEST, "action debe ser halt, resume o toggle")
         reason = str(body.get("reason", ""))[:200]
+        power = bool(body.get("power"))            # botón "Apagar / Encender" de las tarjetas: mismo interruptor
         with self._db_lock, self._sm() as sm:
             current = bool(sm.account()["manual_halt"])
             on = {"halt": True, "resume": False, "toggle": not current}[action]
-            result = sm.set_manual_halt(on, reason, source)
+            result = sm.set_manual_halt(on, reason or ("Apagado desde el panel" if power and on else ""), source)
+            n_open = len(sm.positions())
+            if on and body.get("close_positions") and n_open:
+                sm.request_close_all(reason or "Apagado desde el panel", source)   # las cierra el propio bot
+                result["close_requested"] = n_open
+            elif not on:
+                sm.cancel_close_all()
             acc = sm.account()
-        log.warning("Kill switch %s por %s: %s -> %s (%s)", "ON" if on else "OFF", source,
-                    result["status_before"], result["status_after"], reason)
+        result["power"], result["open_positions"] = power, n_open
+        log.warning("Kill switch %s por %s: %s -> %s (%s)%s", "ON" if on else "OFF", source,
+                    result["status_before"], result["status_after"], reason,
+                    f"; cierre pedido de {n_open} posiciones" if result.get("close_requested") else "")
         result["notified"] = self.notifier.kill_switch(result, acc, reason, source)
         result["account"] = {"status": acc["status"], "manual_halt": bool(acc["manual_halt"]),
                              "cooldown_bars_remaining": acc["cooldown_bars_remaining"]}
