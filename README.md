@@ -48,6 +48,10 @@ python quant_core_engine.py --csv velas.csv --balance 10000 --json-only
 python backtester.py --csv data/candles/BTCUSDT_1h.csv --out-md reporte.md --out-json reporte.json
 python backtester.py --symbol BTCUSDT --interval 1h --limit 8760 --trades-out trades.csv
 
+# Comparativa de variantes (SL, TP, Break-Even, cortos) en varios pares y temporalidades.
+# Cada serie se parte en entrenamiento (70%) y validación (30%) para no elegir mirando el examen.
+python backtester.py --sweep BTCUSDT,ETHUSDT,SOLUSDT --intervals 1h,4h,1d --out-md variantes.md --out-csv variantes.csv
+
 # Futuros x2: el tope del 85% escala a 170% para llegar al 1.5% de riesgo exacto
 python backtester.py --csv data/candles/BTCUSDT_1h.csv --params '{"max_leverage": 2.0}'
 

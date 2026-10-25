@@ -15,11 +15,18 @@ Uso:
   python backtester.py --csv data/candles/BTCUSDT_1h.csv
   python backtester.py --symbol BTCUSDT --interval 1h --limit 8760           # descarga (o usa el CSV local)
   python backtester.py --csv velas.csv --params '{"max_leverage": 2.0}' --out-md reporte.md --out-json reporte.json
+
+Modo comparativo (--sweep): prueba cada combinación de DEFAULT_GRID en cada par y temporalidad.
+Cada serie se parte en entrenamiento (primer 70%) y validación (último 30%, nunca usado para elegir):
+una variante solo es creíble si gana en las dos partes y en varios pares.
+  python backtester.py --sweep BTCUSDT,ETHUSDT,SOLUSDT --intervals 1h,4h,1d --out-md variantes.md --out-csv variantes.csv
+  python backtester.py --sweep BTCUSDT --intervals 4h --grid '{"tp_atr_mult": [2.0, 3.0], "be_atr_mult": [null]}'
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import sys
 from dataclasses import dataclass
@@ -38,6 +45,17 @@ class BacktestConfig:
     fee_pct: float = 0.08         # por orden, % del nocional
     slippage_pct: float = 0.02    # % en contra en la entrada y en salidas por stop
     db_path: str = ":memory:"     # pon una ruta para inspeccionar la base después
+
+
+# Combinaciones del modo comparativo. be_atr_mult None = sin Break-Even. Incluye la regla oficial.
+DEFAULT_GRID: dict[str, list] = {
+    "sl_atr_mult": [1.6, 2.2],
+    "tp_atr_mult": [3.6, 2.4],
+    "be_atr_mult": [1.5, None],
+    "allow_short": [True, False],
+}
+DEFAULT_SWEEP_LIMITS = {"1h": 8760, "4h": 4380, "1d": 1460}   # ~1, 2 y 4 años
+BE_OFF_ATR = 1000.0                                          # trigger inalcanzable: el TP llega antes
 
 
 def _max_drawdown_pct(equity: np.ndarray) -> float:
@@ -200,13 +218,152 @@ def markdown_report(rep: dict) -> str:
     return "\n".join(["| Métrica | Valor |", "|---|---|"] + [f"| {k} | {v} |" for k, v in rows])
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# MODO COMPARATIVO
+# ════════════════════════════════════════════════════════════════════════════
+def grid_combos(grid: dict[str, list]) -> list[dict]:
+    keys = list(grid)
+    return [dict(zip(keys, vals)) for vals in itertools.product(*(grid[k] for k in keys))]
+
+
+def _params_for(base: q.Params, combo: dict) -> q.Params:
+    p = q.Params(**{k: getattr(base, k) for k in base.__dataclass_fields__})
+    for k, v in combo.items():
+        if k == "be_atr_mult" and v is None:
+            v = BE_OFF_ATR
+        setattr(p, k, type(getattr(p, k))(v))
+    return p
+
+
+def combo_label(combo: dict) -> str:
+    parts = []
+    for k, v in combo.items():
+        if k == "allow_short":
+            parts.append("con cortos" if v else "solo largos")
+        elif k == "be_atr_mult":
+            parts.append("sin BE" if v is None else f"BE {v:g}")
+        else:
+            name = {"sl_atr_mult": "SL", "tp_atr_mult": "TP"}.get(k, k)
+            parts.append(f"{name} {v:g}" if isinstance(v, (int, float)) else f"{name} {v}")
+    return " · ".join(parts)
+
+
+def split_train_test(df: pd.DataFrame, p: q.Params, train_frac: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """La validación arranca justo en el corte; las velas previas solo calientan los indicadores."""
+    if not 0.1 <= train_frac <= 0.9:
+        raise ValueError("train_frac debe estar entre 0.1 y 0.9")
+    cut = int(len(df) * train_frac)
+    warm = p.min_candles - 1
+    return df.iloc[:cut].reset_index(drop=True), df.iloc[max(0, cut - warm):].reset_index(drop=True)
+
+
+def _brief(res: dict) -> dict:
+    r = res["results"]
+    return {"trades": r["trades"], "return_pct": r["net_return_pct"], "pf": r["profit_factor"],
+            "dd_pct": r["max_drawdown_pct"], "win_rate_pct": r["win_rate_pct"], "bh_pct": r["buy_and_hold_return_pct"]}
+
+
+def run_sweep(datasets: dict[tuple[str, str], pd.DataFrame], grid: dict[str, list] | None = None,
+              base: q.Params | None = None, cfg: BacktestConfig | None = None, train_frac: float = 0.7,
+              progress=None) -> list[dict]:
+    """Una fila por (par, temporalidad, combinación) con métricas de entrenamiento y de validación."""
+    grid = grid or DEFAULT_GRID
+    base = base or q.Params()
+    cfg = cfg or BacktestConfig()
+    cfg = BacktestConfig(cfg.initial_balance, cfg.fee_pct, cfg.slippage_pct, ":memory:")
+    combos = grid_combos(grid)
+    official = q.Params()
+    rows = []
+    for (symbol, interval), df in datasets.items():
+        train, test = split_train_test(df, base, train_frac)
+        if progress:
+            progress(f"{symbol} {interval}: {len(combos)} variantes ({len(train)} velas entrenamiento, "
+                     f"{len(test) - base.min_candles + 1} validación)")
+        for combo in combos:
+            p = _params_for(base, combo)
+            tr = _brief(run_backtest(train, p, cfg, symbol)["report"])
+            te = _brief(run_backtest(test, p, cfg, symbol)["report"])
+            rows.append({"symbol": symbol, "interval": interval, "variant": combo_label(combo),
+                         "official": all(getattr(official, a) == b for a, b in combo.items()), **combo,
+                         **{f"train_{a}": b for a, b in tr.items()}, **{f"test_{a}": b for a, b in te.items()}})
+    return rows
+
+
+def summarize_sweep(rows: list[dict]) -> list[dict]:
+    """Agrupa por variante: en cuántas series gana en entrenamiento Y validación, y su retorno medio."""
+    out = []
+    for variant, g in pd.DataFrame(rows).groupby("variant", sort=False):
+        both = (g.train_return_pct > 0) & (g.test_return_pct > 0)
+        out.append({"variant": variant, "official": bool(g.official.any()), "series": int(len(g)),
+                    "wins_both": int(both.sum()),
+                    "mean_train_return_pct": round(float(g.train_return_pct.mean()), 2),
+                    "mean_test_return_pct": round(float(g.test_return_pct.mean()), 2),
+                    "mean_test_pf": round(float(g.test_pf.dropna().mean()), 3) if g.test_pf.notna().any() else None,
+                    "worst_test_dd_pct": round(float(g.test_dd_pct.max()), 2),
+                    "test_trades": int(g.test_trades.sum())})
+    # Se ordena por entrenamiento: ordenar por validación sería elegir mirando el examen.
+    return sorted(out, key=lambda r: (-r["wins_both"], -r["mean_train_return_pct"]))
+
+
+def markdown_sweep(rows: list[dict], train_frac: float = 0.7, top: int = 10) -> str:
+    def f(v, fmt="{:+.2f}%"):
+        return "—" if v is None or (isinstance(v, float) and np.isnan(v)) else fmt.format(v)
+
+    summ = summarize_sweep(rows)
+    n_series = summ[0]["series"] if summ else 0
+    lines = ["# Comparativa de variantes",
+             "",
+             f"Entrenamiento = primer {train_frac:.0%} de cada serie; validación = último {1 - train_frac:.0%} "
+             "(no se usa para ordenar). Una variante es creíble si gana en las dos partes en varias series.",
+             "",
+             f"## Variantes ordenadas por robustez ({n_series} series por variante)",
+             "",
+             "| Variante | Gana en ent. y val. | Retorno medio ent. | Retorno medio val. | PF medio val. | Peor DD val. | Trades val. |",
+             "|---|---|---|---|---|---|---|"]
+    for r in summ[:top] + [r for r in summ[top:] if r["official"]]:
+        name = f"**{r['variant']}** (oficial)" if r["official"] else r["variant"]
+        lines.append(f"| {name} | {r['wins_both']}/{r['series']} | {f(r['mean_train_return_pct'])} | "
+                     f"{f(r['mean_test_return_pct'])} | {f(r['mean_test_pf'], '{:.3f}')} | "
+                     f"{f(r['worst_test_dd_pct'], '{:.2f}%')} | {r['test_trades']} |")
+    lines += ["", "## Mejor variante de entrenamiento en cada serie, y cómo le fue en validación", "",
+              "| Serie | Variante | Ret. ent. | Ret. val. | PF val. | DD val. | Buy & Hold val. | Oficial en val. |",
+              "|---|---|---|---|---|---|---|---|"]
+    df = pd.DataFrame(rows)
+    for (sym, iv), g in df.groupby(["symbol", "interval"], sort=False):
+        best = g.loc[g.train_return_pct.idxmax()]
+        off = g[g.official]
+        off_txt = f(float(off.test_return_pct.iloc[0])) if len(off) else "—"
+        lines.append(f"| {sym} {iv} | {best.variant} | {f(best.train_return_pct)} | {f(best.test_return_pct)} | "
+                     f"{f(best.test_pf, '{:.3f}')} | {f(best.test_dd_pct, '{:.2f}%')} | {f(best.test_bh_pct)} | {off_txt} |")
+    return "\n".join(lines) + "\n"
+
+
+def _load_sweep_data(symbols: list[str], intervals: list[str], limit: int | None) -> dict:
+    from market_fetcher import fetch_candles, save_csv, default_csv_path
+    data = {}
+    for sym in symbols:
+        for iv in intervals:
+            n = limit or DEFAULT_SWEEP_LIMITS.get(iv, 2000)
+            df, info = fetch_candles(sym, iv, n, verbose=True)
+            if not info["source"].startswith("csv:"):
+                save_csv(df, default_csv_path(sym, iv))
+            print(f"[sweep] {sym} {iv}: {info['candles']} velas desde {info['source']}", file=sys.stderr)
+            data[(sym.upper(), iv)] = df
+    return data
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Backtest vela a vela del núcleo cuantitativo.")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--csv", help="CSV OHLCV histórico")
     src.add_argument("--symbol", help="Descarga velas públicas (BTCUSDT, ETHUSDT, SOLUSDT...)")
+    src.add_argument("--sweep", metavar="SYMBOLS", help="Modo comparativo: pares separados por coma")
     ap.add_argument("--interval", default="1h")
-    ap.add_argument("--limit", type=int, default=1000, help="Velas a descargar con --symbol")
+    ap.add_argument("--intervals", default="1h,4h,1d", help="Temporalidades del modo comparativo")
+    ap.add_argument("--grid", help="JSON {parámetro: [valores]} para el modo comparativo (null en be_atr_mult = sin BE)")
+    ap.add_argument("--train-frac", type=float, default=0.7, help="Parte de entrenamiento en el modo comparativo")
+    ap.add_argument("--out-csv", help="Modo comparativo: CSV con todas las filas")
+    ap.add_argument("--limit", type=int, help="Velas a descargar (1000 con --symbol; ~1-4 años con --sweep)")
     ap.add_argument("--balance", type=float, default=10000.0)
     ap.add_argument("--fee", type=float, default=0.08, help="Comisión por orden en %")
     ap.add_argument("--slippage", type=float, default=0.02, help="Deslizamiento en %")
@@ -229,11 +386,33 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_short:
         p.allow_short = False
 
+    if args.sweep:
+        grid = DEFAULT_GRID
+        if args.grid:
+            grid = json.loads(args.grid)
+            for k, v in grid.items():
+                if not hasattr(p, k) or not isinstance(v, list) or not v:
+                    raise SystemExit(f"--grid: '{k}' debe ser un parámetro de Params con una lista de valores")
+        symbols = [s.strip().upper() for s in args.sweep.split(",") if s.strip()]
+        intervals = [s.strip() for s in args.intervals.split(",") if s.strip()]
+        data = _load_sweep_data(symbols, intervals, args.limit)
+        rows = run_sweep(data, grid, p, BacktestConfig(args.balance, args.fee, args.slippage), args.train_frac,
+                         progress=lambda m: print(f"[sweep] {m}", file=sys.stderr))
+        md = markdown_sweep(rows, args.train_frac)
+        if args.out_csv:
+            pd.DataFrame(rows).to_csv(args.out_csv, index=False)
+        if args.out_md:
+            Path(args.out_md).write_text(md, encoding="utf-8")
+        if args.out_json:
+            Path(args.out_json).write_text(json.dumps(rows, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        print(md)
+        return 0
+
     if args.csv:
         df, symbol = q.load_csv(args.csv), Path(args.csv).stem.split("_")[0].upper()
     else:
         from market_fetcher import fetch_candles
-        df, info = fetch_candles(args.symbol, args.interval, args.limit, verbose=True)
+        df, info = fetch_candles(args.symbol, args.interval, args.limit or 1000, verbose=True)
         symbol = args.symbol.upper()
         print(f"[backtester] velas: {info['candles']} desde {info['source']}", file=sys.stderr)
 
