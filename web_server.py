@@ -20,6 +20,8 @@ Endpoints:
                          últimas operaciones, curva, decisión de la última vela y si el proceso está vivo
   GET  /api/state        cuenta, exposición, runner_meta, posiciones (con precio actual), últimos 20 trades,
                          PnL de hoy/semana/mes (UTC), curva de balance y precio actual de cada par
+  GET  /api/binance      tu cuenta real de Binance, SOLO LECTURA (binance_account.py): saldo por moneda y billetera,
+                         total en USD y permisos de la llave. Sin BINANCE_API_KEY en .env responde configured=false
   POST /api/scan-now     diagnóstico de las 3 capas en cada par configurado (no abre órdenes)
   POST /api/kill-switch  {"action": "halt" | "resume" | "toggle", "reason": "..."}
 
@@ -50,6 +52,7 @@ from urllib.parse import parse_qs, urlsplit
 import pandas as pd
 
 import quant_core_engine as q
+from binance_account import AccountView
 from bot_runner import BOTS_FILE, RunnerConfig, bot_settings, load_bots, settings_from_env
 from market_fetcher import fetch_candles, fetch_price
 from notifier import Notifier, load_env_file
@@ -478,8 +481,9 @@ class BotRegistry:
                 "bots": out}
 
 
-def make_handler(app: DashboardApp | BotRegistry) -> type[BaseHTTPRequestHandler]:
+def make_handler(app: DashboardApp | BotRegistry, binance: AccountView | None = None) -> type[BaseHTTPRequestHandler]:
     registry = app if isinstance(app, BotRegistry) else BotRegistry([app])
+    binance = binance or AccountView(None)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "Ingresosbot"
@@ -560,6 +564,9 @@ def make_handler(app: DashboardApp | BotRegistry) -> type[BaseHTTPRequestHandler
                 elif path == "/api/overview":
                     if self._authorized(allow_query=True):
                         self._json(HTTPStatus.OK, registry.overview())
+                elif path == "/api/binance":
+                    if self._authorized(allow_query=False):
+                        self._json(HTTPStatus.OK, binance.snapshot())
                 else:
                     self._json(HTTPStatus.NOT_FOUND, {"error": "no encontrado"})
             except ApiError as exc:
@@ -591,8 +598,9 @@ def make_handler(app: DashboardApp | BotRegistry) -> type[BaseHTTPRequestHandler
     return Handler
 
 
-def build_server(app: DashboardApp | BotRegistry, host: str = "127.0.0.1", port: int = 8050) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), make_handler(app))
+def build_server(app: DashboardApp | BotRegistry, host: str = "127.0.0.1", port: int = 8050,
+                 binance: AccountView | None = None) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer((host, port), make_handler(app, binance))
     server.daemon_threads = True
     return server
 
@@ -623,7 +631,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         cfg, params = settings_from_env()
         registry = BotRegistry([DashboardApp(cfg, params, key)])
-    server = build_server(registry, host, port)
+    binance = AccountView.from_env()
+    server = build_server(registry, host, port, binance)
+    log.info("Cuenta de Binance (solo lectura): %s",
+             f"llave {binance.client.key_hint}" if binance.client else "sin configurar")
     log.info("Panel en http://%s:%d con %d bot(s): %s", host, port, len(registry.apps),
              ", ".join(f"{a.bot['name']} ({a.cfg.db_path})" for a in registry.apps.values()))
     try:

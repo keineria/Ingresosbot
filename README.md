@@ -17,6 +17,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 
 **Panel con todos los bots en vivo**: `bot.commonbird.com` abre en *Todos los bots*, una tarjeta en vivo por estrategia (si el proceso está vivo, Capa 1, valor de la cuenta, posiciones con su precio actual, últimas operaciones, decisión de la última vela) y la curva comparada en %. Para añadir un cuarto bot basta con su ficha en `deploy/bots.json` y `systemctl enable --now ingresosbot-bot@ID`: [docs/PANEL_BOTS.md](docs/PANEL_BOTS.md).
 
+**Tu cuenta real de Binance, solo lectura**: la pestaña *Mi Binance* del panel muestra cada moneda que tienes en Spot, Earn y Funding con su valor en dólares. Usa una API key con solo *Enable Reading* (`BINANCE_API_KEY` / `BINANCE_API_SECRET` en `.env`); `binance_account.py` solo conoce llamadas de lectura y no usa una llave que permita operar o retirar. Los bots siguen en paper. Paso a paso: [docs/BINANCE_SOLO_LECTURA.md](docs/BINANCE_SOLO_LECTURA.md).
+
 ## Módulos
 
 | Archivo | Qué hace |
@@ -28,7 +30,7 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `strategy_lab.py` | Walk-forward: elige parámetros con el pasado, los mide en meses que no vio y guarda cada orden simulada en SQLite |
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
 | `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
-| `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, pestaña «Plan de aportes» para proyectar capital + aporte mensual, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |
+| `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, pestaña «Plan de aportes» para proyectar capital + aporte mensual, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`, `/api/binance` de solo lectura) en 127.0.0.1:8050 |
 | `arbitrage_scanner.py` | Medición de arbitraje SIN operar (solo APIs públicas): spreads entre 9 exchanges, triangular en Binance y funding de perpetuos; informe neto de comisiones para ~500 USD |
 
 ```bash
