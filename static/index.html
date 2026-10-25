@@ -226,8 +226,11 @@
     const pos = s.open_positions || [];
     $('pos-count').textContent = pos.length + ' abiertas';
     $('pos-body').innerHTML = pos.length ? pos.map((p) => {
+      const trail = !!p.trail_atr_mult;   // perfil Trend Rider: sin TP fijo ni BE, el SL sube solo
       const be = p.is_at_breakeven
         ? '<span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-700">🛡 BE +0.2%</span>'
+        : trail && p.stop_loss !== p.initial_stop_loss
+        ? '<span class="rounded-full bg-sky-500/15 px-2 py-0.5 text-xs font-semibold text-sky-300 ring-1 ring-sky-700">📈 Trailing</span>'
         : '<span class="rounded-full bg-slate-700/60 px-2 py-0.5 text-xs text-slate-300">SL inicial</span>';
       const pc = p.unrealized_pnl_usd > 0 ? 'text-emerald-300' : p.unrealized_pnl_usd < 0 ? 'text-red-300' : '';
       return `<tr class="hover:bg-slate-800/40">
@@ -235,8 +238,8 @@
         <td class="px-4 py-2 ${p.side === 'LONG' ? 'text-emerald-300' : 'text-rose-300'}">${esc(p.side)}</td>
         <td class="num px-4 py-2 text-right">${px(p.entry_price)}</td>
         <td class="num px-4 py-2 text-right">${px(p.stop_loss)}</td>
-        <td class="num px-4 py-2 text-right">${px(p.take_profit)}</td>
-        <td class="num px-4 py-2 text-right text-slate-400">${px(p.breakeven_trigger)}</td>
+        <td class="num px-4 py-2 text-right">${trail ? 'trailing ' + fmt(p.trail_atr_mult, 1) + ' ATR' : px(p.take_profit)}</td>
+        <td class="num px-4 py-2 text-right text-slate-400">${trail ? '—' : px(p.breakeven_trigger)}</td>
         <td class="num px-4 py-2 text-right">${px(p.current_price)}</td>
         <td class="num px-4 py-2 text-right ${pc}">${signed(p.unrealized_pnl_usd)}</td>
         <td class="px-4 py-2">${be}</td></tr>`;
@@ -264,7 +267,7 @@
         const l2 = r.layer_2 || {}, ind = l2.indicators || {};
         const blocks = (l2.blocking_filters || []).map((f) => `<li>${esc(f)}</li>`).join('');
         const l3 = r.layer_3 && r.layer_3.side
-          ? `<div class="num mt-1 text-xs text-slate-400">SL ${px(r.layer_3.stop_loss)} · TP ${px(r.layer_3.take_profit)} · ${fmt(r.layer_3.position_size_usd)} $</div>` : '';
+          ? `<div class="num mt-1 text-xs text-slate-400">SL ${px(r.layer_3.stop_loss)} · ${r.layer_3.take_profit === null ? 'trailing stop' : 'TP ' + px(r.layer_3.take_profit)} · ${fmt(r.layer_3.position_size_usd)} $</div>` : '';
         return `<div class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
           <div class="flex items-center justify-between">
             <span class="font-semibold text-white">${esc(sym)}</span>

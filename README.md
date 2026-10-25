@@ -11,6 +11,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | 2 | market-regime-quant | [SKILL_1](skills/SKILL_1_market_regime_quant.md) | Régimen y señal LONG / SHORT / WAIT |
 | 3 | atr-risk-guardian | [SKILL_2](skills/SKILL_2_atr_risk_guardian.md) | SL, TP, Break-Even y tamaño |
 
+**Perfil paralelo Trend Rider** ([SKILL_4](skills/SKILL_4_trend_rider.md), `--params '{"strategy": "trend"}'`): misma Capa 1; entra por ruptura del máximo de 20 velas sobre la EMA200 y sale con trailing stop a 4 ATR, sin TP fijo ni Break-Even. Las reglas oficiales siguen siendo el valor por defecto. Investigación, validación y cómo correrlo al lado del oficial: [docs/TREND_RIDER.md](docs/TREND_RIDER.md).
+
 ## Módulos
 
 | Archivo | Qué hace |
@@ -52,6 +54,10 @@ python backtester.py --symbol BTCUSDT --interval 1h --limit 8760 --trades-out tr
 # Cada serie se parte en entrenamiento (70%) y validación (30%) para no elegir mirando el examen.
 python backtester.py --sweep BTCUSDT,ETHUSDT,SOLUSDT --intervals 1h,4h,1d --out-md variantes.md --out-csv variantes.csv
 
+# Trend Rider contra el oficial (y vecinos de sus parámetros) con la misma partición 70/30
+python backtester.py --sweep BTCUSDT,ETHUSDT,SOLUSDT --intervals 1h,4h,1d --grid trend --out-md trend_vs_oficial.md
+python backtester.py --csv data/candles/BTCUSDT_4h.csv --params deploy/trend_params.json
+
 # Futuros x2: el tope del 85% escala a 170% para llegar al 1.5% de riesgo exacto
 python backtester.py --csv data/candles/BTCUSDT_1h.csv --params '{"max_leverage": 2.0}'
 
@@ -74,6 +80,8 @@ python -m unittest discover -s tests -v
 sudo git clone https://github.com/keineria/Ingresosbot.git /opt/Ingresosbot
 cd /opt/Ingresosbot && sudo bash deploy/install_almalinux.sh
 ```
+
+Trend Rider en paralelo (paper, base `data/trend_state.db`, 4h): `sudo systemctl enable --now ingresosbot-trend` (el instalador copia el servicio pero no lo activa).
 
 El instalador crea el usuario de servicio `ingresosbot`, el `.venv` con pandas y numpy, el `.env` (con una `DASHBOARD_ACCESS_KEY` aleatoria) y deja activos `ingresosbot.service` (bot) e `ingresosbot-web.service` (panel). Para publicar el panel con SSL en `https://bot.commonbird.com` sin abrir puertos sigue [deploy/CYBERPANEL_SETUP.md](deploy/CYBERPANEL_SETUP.md). Para actualizar: `sudo git -C /opt/Ingresosbot pull && sudo bash deploy/install_almalinux.sh`.
 

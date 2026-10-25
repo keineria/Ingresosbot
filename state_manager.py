@@ -9,6 +9,8 @@ Archivo por defecto: data/trading_state.db, con 3 tablas:
 
 Lógica automática:
   * Precio >= breakeven_trigger (LONG) -> stop_loss = breakeven_stop_price, is_at_breakeven = 1.
+  * Perfil "trend": sin TP ni BE (se guardan como 0) y trailing stop con apply_trailing() al cierre de vela:
+    SL = máximo desde la entrada - trail_atr_mult x ATR, solo a favor (trail_peak guarda ese máximo).
   * Cierre por TP / SL / BE -> actualiza balance, consecutive_losses, daily_drawdown_pct,
     enfriamiento de 15 velas y status (reglas de SKILL_3, vía quant_core_engine).
 
@@ -59,7 +61,9 @@ CREATE TABLE IF NOT EXISTS open_positions (
     is_at_breakeven       INTEGER NOT NULL DEFAULT 0 CHECK (is_at_breakeven IN (0, 1)),
     regime                TEXT,
     risk_mode             TEXT,
-    opened_at             TEXT    NOT NULL
+    opened_at             TEXT    NOT NULL,
+    trail_atr_mult        REAL,
+    trail_peak            REAL
 );
 CREATE TABLE IF NOT EXISTS trade_history (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,36 +110,48 @@ def _ts(t: Any) -> str:
 
 
 def check_exit(side: str, stop_loss: float, take_profit: float, is_at_breakeven: bool,
-               o: float, h: float, l: float) -> tuple[float, str] | None:
+               o: float, h: float, l: float, sl_reason: str | None = None) -> tuple[float, str] | None:
     """(precio_salida, motivo) si la vela cierra la posición, o None.
 
     Conservador: si la vela toca SL y TP, se asume que tocó primero el SL.
-    Si abre más allá de un nivel (gap), sale al open.
+    Si abre más allá de un nivel (gap), sale al open. take_profit <= 0 = sin TP (perfil "trend").
     """
-    sl_reason = "BREAK_EVEN" if is_at_breakeven else "STOP_LOSS"
+    sl_reason = sl_reason or ("BREAK_EVEN" if is_at_breakeven else "STOP_LOSS")
+    has_tp = take_profit > 0
     if side == "LONG":
         if o <= stop_loss:
             return o, sl_reason + "_GAP"
-        if o >= take_profit:
+        if has_tp and o >= take_profit:
             return o, "TAKE_PROFIT_GAP"
         if l <= stop_loss:
             return stop_loss, sl_reason
-        if h >= take_profit:
+        if has_tp and h >= take_profit:
             return take_profit, "TAKE_PROFIT"
     else:
         if o >= stop_loss:
             return o, sl_reason + "_GAP"
-        if o <= take_profit:
+        if has_tp and o <= take_profit:
             return o, "TAKE_PROFIT_GAP"
         if h >= stop_loss:
             return stop_loss, sl_reason
-        if l <= take_profit:
+        if has_tp and l <= take_profit:
             return take_profit, "TAKE_PROFIT"
     return None
 
 
 def break_even_touched(side: str, trigger: float, h: float, l: float) -> bool:
+    if trigger <= 0:                     # 0 = sin Break-Even (perfil "trend")
+        return False
     return h >= trigger if side == "LONG" else l <= trigger
+
+
+def _sl_reason(pos: dict) -> str:
+    """STOP_LOSS, BREAK_EVEN o TRAILING_STOP (el trailing ya movió el SL inicial)."""
+    if pos["is_at_breakeven"]:
+        return "BREAK_EVEN"
+    if pos.get("trail_atr_mult") and pos["stop_loss"] != pos["initial_stop_loss"]:
+        return "TRAILING_STOP"
+    return "STOP_LOSS"
 
 
 class StateManager:
@@ -155,6 +171,11 @@ class StateManager:
         if "manual_halt" not in cols:      # bases creadas antes de la Fase 4
             self.conn.execute("ALTER TABLE account_state ADD COLUMN manual_halt INTEGER NOT NULL DEFAULT 0")
             self.conn.commit()
+        pos_cols = {r[1] for r in self.conn.execute("PRAGMA table_info(open_positions)")}
+        for col in ("trail_atr_mult", "trail_peak"):      # bases creadas antes del perfil "trend"
+            if col not in pos_cols:
+                self.conn.execute(f"ALTER TABLE open_positions ADD COLUMN {col} REAL")
+        self.conn.commit()
         if self.conn.execute("SELECT COUNT(*) FROM account_state").fetchone()[0] == 0:
             self.conn.execute(
                 "INSERT INTO account_state (id, balance, initial_balance, day_peak_equity, updated_at) "
@@ -258,16 +279,18 @@ class StateManager:
     def open_position(self, symbol: str, side: str, entry_price: float, stop_loss: float, take_profit: float,
                       breakeven_trigger: float, breakeven_stop_price: float, position_units: float,
                       risk_usd: float, opened_at: Any, regime: str | None = None,
-                      risk_mode: str | None = None) -> int:
+                      risk_mode: str | None = None, trail_atr_mult: float | None = None) -> int:
+        """take_profit / breakeven_trigger = 0 los desactivan; trail_atr_mult activa el trailing stop."""
         a = self.account()
         if a["status"] == "HALTED" or a["manual_halt"]:
             raise RuntimeError("Cuenta en HALTED: no se pueden abrir posiciones.")
         cur = self.conn.execute(
             "INSERT INTO open_positions (symbol, side, entry_price, stop_loss, take_profit, breakeven_trigger, "
-            "breakeven_stop_price, position_units, initial_stop_loss, risk_usd, regime, risk_mode, opened_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "breakeven_stop_price, position_units, initial_stop_loss, risk_usd, regime, risk_mode, opened_at, "
+            "trail_atr_mult, trail_peak) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (symbol, side, entry_price, stop_loss, take_profit, breakeven_trigger, breakeven_stop_price,
-             position_units, stop_loss, risk_usd, regime, risk_mode, _ts(opened_at)))
+             position_units, stop_loss, risk_usd, regime, risk_mode, _ts(opened_at),
+             trail_atr_mult or None, entry_price if trail_atr_mult else None))
         self.conn.commit()
         return int(cur.lastrowid)
 
@@ -279,10 +302,11 @@ class StateManager:
         rk = result["layer_3_atr_risk_guardian"]
         return self.open_position(
             symbol=order["symbol"], side=rk["side"], entry_price=rk["entry_price"],
-            stop_loss=rk["stop_loss"], take_profit=rk["take_profit"],
-            breakeven_trigger=rk["break_even_trigger"], breakeven_stop_price=rk["break_even_new_sl"],
+            stop_loss=rk["stop_loss"], take_profit=rk["take_profit"] or 0.0,
+            breakeven_trigger=rk["break_even_trigger"] or 0.0, breakeven_stop_price=rk["break_even_new_sl"] or 0.0,
             position_units=rk["quantity"], risk_usd=rk["risk_usd_effective"], opened_at=opened_at,
-            regime=result["layer_2_market_regime"]["regime"], risk_mode=order["risk_mode"])
+            regime=result["layer_2_market_regime"]["regime"], risk_mode=order["risk_mode"],
+            trail_atr_mult=rk.get("trail_atr_mult"))
 
     def positions(self, symbol: str | None = None) -> list[dict]:
         sql, args = "SELECT * FROM open_positions", ()
@@ -312,7 +336,8 @@ class StateManager:
         events = []
         slip = slippage_pct / 100.0
         for pos in self.positions(symbol):
-            hit = check_exit(pos["side"], pos["stop_loss"], pos["take_profit"], bool(pos["is_at_breakeven"]), o, h, l)
+            hit = check_exit(pos["side"], pos["stop_loss"], pos["take_profit"], bool(pos["is_at_breakeven"]),
+                             o, h, l, _sl_reason(pos))
             if hit:
                 price, reason = hit
                 if not reason.startswith("TAKE_PROFIT"):   # stop a mercado: deslizamiento en contra
@@ -323,13 +348,45 @@ class StateManager:
                 events.append(self._be_event(pos, None, bar_time))
         return events
 
+    def apply_trailing(self, symbol: str, bar_time: Any, h: float, l: float, atr_value: float) -> list[dict]:
+        """Al cierre de cada vela, después de process_candle(): mueve a favor el SL de las posiciones con trailing.
+
+        LONG: trail_peak = máximo desde la entrada; SL = trail_peak - trail_atr_mult x ATR (redondeo hacia abajo).
+        SHORT: espejo con el mínimo. El SL nunca retrocede y rige desde la vela siguiente.
+        """
+        events: list[dict] = []
+        if atr_value is None or not atr_value > 0:
+            return events
+        for pos in self.positions(symbol):
+            k = pos.get("trail_atr_mult")
+            if not k:
+                continue
+            peak = pos["trail_peak"] if pos["trail_peak"] is not None else pos["entry_price"]
+            if pos["side"] == "LONG":
+                peak = max(peak, h)
+                new_sl = q.floor_to_step(peak - k * atr_value, self.p.price_tick)
+                better = new_sl > pos["stop_loss"]
+            else:
+                peak = min(peak, l)
+                new_sl = q.ceil_to_step(peak + k * atr_value, self.p.price_tick)
+                better = new_sl < pos["stop_loss"]
+            self.conn.execute("UPDATE open_positions SET trail_peak = ?, stop_loss = ? WHERE id = ?",
+                              (peak, new_sl if better else pos["stop_loss"], pos["id"]))
+            if better:
+                moved = dict(pos, stop_loss=new_sl, trail_peak=peak)
+                events.append({"event": "TRAILING_STOP", "position_id": pos["id"], "symbol": symbol,
+                               "old_stop_loss": pos["stop_loss"], "new_stop_loss": new_sl, "peak": peak,
+                               "atr14": atr_value, "at": _ts(bar_time), "position": moved})
+        self.conn.commit()
+        return events
+
     def update_price(self, symbol: str, price: float, at: Any = None) -> list[dict]:
         """Versión en vivo: un precio puntual (último trade o ticker)."""
         at = at if at is not None else _now()
         events = []
         for pos in self.positions(symbol):
             hit = check_exit(pos["side"], pos["stop_loss"], pos["take_profit"], bool(pos["is_at_breakeven"]),
-                             price, price, price)
+                             price, price, price, _sl_reason(pos))
             if hit:
                 events.append({"event": "CLOSE", **self.close_position(pos["id"], hit[0], hit[1].replace("_GAP", ""), at)})
             elif not pos["is_at_breakeven"] and break_even_touched(pos["side"], pos["breakeven_trigger"], price, price):

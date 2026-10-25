@@ -1,0 +1,8 @@
+{
+  "strategy": "trend",
+  "trend_entry": "breakout",
+  "donchian_len": 20,
+  "trend_sl_atr_mult": 2.5,
+  "trail_atr_mult": 4.0,
+  "trend_allow_short": false
+}

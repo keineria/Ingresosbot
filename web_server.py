@@ -125,7 +125,7 @@ class DashboardApp:
             "server_time": pd.Timestamp(self.clock(), unit="s", tz="UTC").isoformat(),
             "config": {"symbols": self.cfg.symbols, "interval": self.cfg.interval,
                        "max_leverage": self.p.max_leverage, "max_allocation_pct": self.p.max_allocation_pct,
-                       "allow_short": self.p.allow_short},
+                       "allow_short": self.p.allow_short, "strategy": self.p.strategy},
             "account": {k: acc[k] for k in ("status", "balance", "initial_balance", "daily_drawdown_pct",
                                             "consecutive_losses", "cooldown_bars_remaining", "day_peak_equity",
                                             "updated_at")} | {"manual_halt": bool(acc["manual_halt"])},
