@@ -299,6 +299,26 @@
     .views .ret { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
     /* ── Vista "Todos los bots" ──────────────────────────────────────────── */
+    /* ── Mi Binance (solo lectura) ─────────────────────────────────────── */
+    .bn-ro { display: flex; gap: 10px; align-items: flex-start; padding: 12px 15px; margin-bottom: 14px; font-size: 13px; color: var(--ink-2); }
+    .bn-ro .i { color: var(--good); flex: none; margin-top: 1px; }
+    .bn-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; margin-top: 14px; }
+    @media (max-width: 1023px) { .bn-grid { grid-template-columns: 1fr; } }
+    .bn-checks { list-style: none; margin: 0; padding: 6px 16px 14px; }
+    .bn-checks li { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .bn-checks li:last-child { border-bottom: 0; }
+    .bn-checks .mk { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+    .bn-checks .ok .mk { color: var(--good); background: var(--good-soft); }
+    .bn-checks .no .mk { color: var(--bad); background: var(--bad-soft); }
+    .bn-checks .wa .mk { color: var(--warn); background: var(--warn-soft); }
+    .bn-bar { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: var(--inset); margin: 12px 0 0; }
+    .bn-bar span { display: block; height: 100%; }
+    .bn-asset { display: flex; align-items: center; gap: 10px; font-weight: 650; }
+    .bn-asset .av { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--accent-soft); color: var(--accent); flex: none; }
+    .bn-where { font-size: 11.5px; color: var(--ink-3); font-weight: 500; }
+    .bn-empty { padding: 22px 18px; font-size: 13.5px; color: var(--ink-2); }
+    .bn-empty ol { margin: 10px 0 0; padding-left: 20px; } .bn-empty li { margin: 4px 0; }
+    .bn-empty code { font-size: 12.5px; background: var(--inset); padding: 1px 6px; border-radius: 6px; }
     .ov-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
     .ov-kpis .kpi .val { font-size: 21px; }
     @media (max-width: 900px) { .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -415,6 +435,20 @@
     </section>
     <div id="ov-grid" class="ov-grid" aria-label="Bots"></div>
     <div id="chain-ov"></div>
+  </div>
+
+  <!-- Mi Binance: la cuenta real, solo lectura -->
+  <div id="binance" class="hidden">
+    <section>
+      <div class="hero-h">
+        <h1>Mi cuenta de Binance</h1>
+        <span id="bn-badge" class="pill s-mute">…</span>
+      </div>
+      <p class="hero-sub">Lo que tienes hoy en Binance, valorado en dólares con el precio del momento. <span id="bn-when" class="faint"></span></p>
+      <div class="card bn-ro"><svg class="i"><use href="#i-shield"/></svg>
+        <span><b>Solo lectura.</b> El panel solo mira tu saldo: no puede comprar, vender, retirar ni mover nada, y los bots siguen operando en paper (dinero simulado), sin tocar esta cuenta.</span></div>
+      <div id="bn-body"></div>
+    </section>
   </div>
 
   <!-- Un bot en detalle -->
@@ -1188,7 +1222,8 @@
         return `<button type="button" data-view="${esc(b.id)}" aria-current="${view === b.id}" style="--c:${color(b)}" title="${esc(whoFull(b))}">
           <span class="sw${h === 'running' ? '' : ' off'}"></span>${esc(who(b))}
           <span class="ret ${tone(b.return_pct)}">${nil(b.return_pct) ? '' : signed(b.return_pct, 1) + '%'}</span></button>`;
-      }).join('');
+      }).join('') +
+      `<button type="button" data-view="binance" aria-current="${view === 'binance'}" title="Tu cuenta real de Binance, solo lectura"><svg class="i" style="width:15px;height:15px"><use href="#i-wallet"/></svg>Mi Binance</button>`;
   }
   $('views').addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-view]'); if (!b) return;
@@ -1198,17 +1233,18 @@
     if (v === view) return;
     view = v; store.set('ingresosbot.view', v);
     history.replaceState(null, '', v === 'all' ? location.pathname : '#' + encodeURIComponent(v));
-    if (v !== 'all') { botId = v; store.set(BOT, v); scan = null; state = null; }
+    if (v !== 'all' && v !== 'binance') { botId = v; store.set(BOT, v); scan = null; state = null; }
     applyView(); renderViews(); window.scrollTo({ top: 0 }); refresh();
   }
   function applyView() {
-    const all = view === 'all';
+    const all = view === 'all', bn = view === 'binance';
     const chain = $('chain'), home = all ? $('chain-ov') : $('chain-home');
     if (chain.parentNode !== home) { home.appendChild(chain); requestAnimationFrame(drawWires); }
     $('chain-bot').classList.toggle('hidden', !all || !bots || bots.length < 2);
     $('overview').classList.toggle('hidden', !all);
-    $('detail').classList.toggle('hidden', all);
-    $('btn-kill').classList.toggle('hidden', all);
+    $('binance').classList.toggle('hidden', !bn);
+    $('detail').classList.toggle('hidden', all || bn);
+    $('btn-kill').classList.toggle('hidden', all || bn);
     if (all) document.title = 'Todos los bots · Ingresosbot';
   }
   $('chain-bot').addEventListener('click', (ev) => {
@@ -1216,6 +1252,68 @@
     botId = b.dataset.bot; store.set(BOT, botId); scan = null; renderViews(); refresh();
   });
   window.addEventListener('hashchange', () => setView(decodeURIComponent(location.hash.slice(1)) || 'all'));
+
+  // ── Vista "Mi Binance" (solo lectura) ──
+  let binance = null, bnDust = false;
+  const WALLET = { spot: ['Spot', 'var(--accent)'], earn: ['Earn', 'var(--good)'], funding: ['Funding', 'var(--warn)'] };
+  const qty = (v) => nil(v) ? '—' : Number(v).toLocaleString('es-CO', { maximumFractionDigits: v >= 1000 ? 2 : v >= 1 ? 4 : 8 });
+  function renderBinance() {
+    const b = binance || {};
+    document.title = 'Mi Binance · Ingresosbot';
+    $('updated').textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-CO');
+    $('bn-when').textContent = b.fetched_at ? 'Leído de Binance ' + ago(b.fetched_at) + '.' : '';
+    const badge = !b.configured ? ['Sin conectar', 's-mute'] : b.ok ? ['Conectada · solo lectura', 's-good'] : b.blocked ? ['Llave bloqueada', 's-bad'] : ['Error al leer', 's-bad'];
+    $('bn-badge').className = 'pill ' + badge[1]; $('bn-badge').textContent = badge[0];
+    if (!b.configured) {
+      $('bn-body').innerHTML = `<div class="card bn-empty"><b>Aún no has conectado tu cuenta.</b> Necesitas una llave (API key) de Binance de solo lectura:
+        <ol><li>En Binance: Perfil → <b>Gestión de API</b> → Crear API → «Generada por el sistema».</li>
+        <li>Deja marcado solo <b>Enable Reading</b> y restringe el acceso a la IP del VPS.</li>
+        <li>En el VPS, pon la API Key y la Secret Key en <code>/opt/Ingresosbot/.env</code> (<code>BINANCE_API_KEY</code> y <code>BINANCE_API_SECRET</code>) y reinicia <code>ingresosbot-web</code>.</li></ol>
+        <p class="note">La guía completa está en docs/BINANCE_SOLO_LECTURA.md del repositorio.</p></div>`;
+      return;
+    }
+    const perms = b.key || {};
+    const check = (cls, mk, text) => `<li class="${cls}"><span class="mk">${mk}</span><span>${text}</span></li>`;
+    const keyCard = `<div class="card"><div class="card-h"><svg class="i"><use href="#i-shield"/></svg>Seguridad de la llave<span class="right faint" style="font-size:12px">${esc(b.key_hint || '')}</span></div>
+      <ul class="bn-checks">${b.key ? [
+        perms.reading ? check('ok', '✓', 'Puede leer el saldo') : check('no', '✕', 'Falta «Enable Reading»'),
+        perms.risky && perms.risky.length ? check('no', '✕', 'Tiene permisos de más: ' + esc(perms.risky.join(', '))) : check('ok', '✓', 'No puede operar, retirar ni transferir'),
+        perms.ip_restricted ? check('ok', '✓', 'Solo funciona desde la IP del VPS') : check('wa', '!', 'No está restringida a la IP del VPS'),
+      ].join('') : check('no', '✕', 'No se pudo comprobar la llave')}</ul></div>`;
+    if (!b.ok) {
+      $('bn-body').innerHTML = `<div class="bn-grid"><div class="card bn-empty"><b>${b.blocked ? 'El panel no usa esta llave.' : 'No se pudo leer la cuenta.'}</b><p>${esc(b.message || '')}</p>
+        ${(b.notes || []).map((n) => `<p class="note">${esc(n)}</p>`).join('')}</div>${keyCard}</div>`;
+      return;
+    }
+    const w = b.wallets || {}, total = b.total_usd || 0;
+    const kpi = (ico, lbl, val, foot) => `<div class="card kpi"><div class="ico"><svg class="i"><use href="#i-${ico}"/></svg></div><div class="lbl">${lbl}</div><div class="val num">${val}</div><div class="foot">${foot}</div></div>`;
+    const pct = (v) => total > 0 ? fmt(100 * v / total, 1) + '% del total' : '';
+    const assets = (b.assets || []).filter((a) => bnDust || !a.dust);
+    const hidden = (b.assets || []).length - assets.length;
+    const where = (a) => Object.entries(a.wallets).map(([k, v]) => `${WALLET[k] ? WALLET[k][0] : k} ${qty(v.free + v.locked)}${v.locked ? ' (' + qty(v.locked) + ' en uso)' : ''}`).join(' · ');
+    const rows = assets.map((a) => `<tr>
+        <td data-l="Moneda"><div class="bn-asset"><span class="av">${esc(a.asset.slice(0, 3))}</span><div>${esc(a.asset)}<div class="bn-where">${esc(where(a))}</div></div></div></td>
+        <td data-l="Cantidad" class="r">${qty(a.amount)}</td>
+        <td data-l="Precio" class="r">${nil(a.price_usd) ? '—' : px(a.price_usd) + ' $'}</td>
+        <td data-l="Valor" class="r"><b>${usd(a.value_usd)}</b></td>
+        <td data-l="% del total" class="r">${nil(a.share_pct) ? '—' : fmt(a.share_pct, 1) + '%'}</td></tr>`).join('');
+    const bar = Object.keys(WALLET).filter((k) => w[k] > 0).map((k) => `<span style="width:${100 * w[k] / total}%;background:${WALLET[k][1]}" title="${WALLET[k][0]}"></span>`).join('');
+    $('bn-body').innerHTML = `<div class="ov-kpis">
+        ${kpi('wallet', 'Total estimado', usd(total), b.btc_usd ? '≈ ' + qty(total / b.btc_usd) + ' BTC' : '')}
+        ${kpi('bolt', 'Spot', usd(w.spot), pct(w.spot || 0))}
+        ${kpi('trend', 'Earn', usd(w.earn), pct(w.earn || 0))}
+        ${kpi('plug', 'Funding', usd(w.funding), pct(w.funding || 0))}</div>
+      ${total > 0 ? `<div class="bn-bar">${bar}</div>` : ''}
+      <div class="bn-grid">
+        <div class="card"><div class="card-h"><svg class="i"><use href="#i-wallet"/></svg>Tus activos<span class="right faint" style="font-size:12px">${(b.assets || []).length} monedas</span></div>
+          ${assets.length ? `<table class="t"><thead><tr><th>Moneda</th><th class="r">Cantidad</th><th class="r">Precio</th><th class="r">Valor</th><th class="r">% del total</th></tr></thead><tbody>${rows}</tbody></table>`
+                          : '<div class="empty">No hay saldo en la cuenta.</div>'}
+          ${hidden || bnDust ? `<div class="note" style="padding:0 16px 14px"><label><input type="checkbox" id="bn-dust" ${bnDust ? 'checked' : ''}> Mostrar saldos de menos de 1 $${hidden ? ' (' + hidden + ')' : ''}</label></div>` : ''}
+        </div>
+        <div>${keyCard}${(b.notes || []).length ? `<div class="card bn-empty" style="margin-top:14px">${b.notes.map((n) => `<p class="note" style="margin:0 0 6px">${esc(n)}</p>`).join('')}</div>` : ''}</div>
+      </div>`;
+  }
+  $('bn-body').addEventListener('change', (ev) => { if (ev.target.id === 'bn-dust') { bnDust = ev.target.checked; renderBinance(); } });
 
   // ── Vista "Todos los bots" ──
   function renderOverview() {
@@ -1398,11 +1496,13 @@
     try {
       overview = await api('/api/overview');
       bots = overview.bots || [];
-      if (view !== 'all' && !bots.some((b) => b.id === view)) { view = 'all'; history.replaceState(null, '', location.pathname); }
-      if (view !== 'all') botId = view;
+      const bn = view === 'binance';
+      if (view !== 'all' && !bn && !bots.some((b) => b.id === view)) { view = 'all'; history.replaceState(null, '', location.pathname); }
+      if (view !== 'all' && !bn) botId = view;
       if (!bots.some((b) => b.id === botId)) botId = overview.default || (bots[0] && bots[0].id) || '';
       applyView(); renderViews();
       if (view === 'all') renderOverview();
+      if (bn) { binance = await api('/api/binance'); renderBinance(); showError(''); return; }
       render(await api(withBot('/api/state')));   // la cadena de decisión (y el detalle) del bot elegido
       showError('');
     } catch (e) { showError(e.message); }
