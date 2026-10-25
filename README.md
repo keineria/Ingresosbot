@@ -17,7 +17,7 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 |---|---|
 | `quant_core_engine.py` | Motor de 3 capas: indicadores, régimen, riesgo y JSON de la orden |
 | `state_manager.py` | Estado persistente en SQLite (`data/trading_state.db`): cuenta, posiciones abiertas, historial; Break-Even automático |
-| `market_fetcher.py` | Velas públicas sin API key: Binance → data-api.binance.vision → Bybit → CSV local (`data/candles/`) |
+| `market_fetcher.py` | Velas públicas sin API key: data-api.binance.vision → Binance → Bybit → CSV local (`data/candles/`) |
 | `backtester.py` | Backtest vela a vela con engine + state_manager, comisión 0.08% por orden |
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
 | `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
@@ -86,4 +86,4 @@ Cómo se comporta:
 
 Todos los umbrales se pueden cambiar sin tocar el código con `--params '{"slope_min_pct": 0.15, "allow_short": false}'`.
 
-Nota: `api.binance.com` responde HTTP 451 desde algunos países (p. ej. EE. UU.); por eso el fetcher prueba después el espejo público `data-api.binance.vision` y Bybit.
+Nota: `api.binance.com` responde HTTP 451 desde algunos países (p. ej. EE. UU.); por eso el fetcher usa primero el endpoint público de solo datos `data-api.binance.vision` (mismas velas que Binance) y deja `api.binance.com` y Bybit como respaldo.
