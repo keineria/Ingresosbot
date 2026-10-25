@@ -59,8 +59,9 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 chmod 600 "$APP_DIR/.env"
 
 say "5/6 Servicios systemd"
-# ingresosbot-trend.service (Trend Rider en paralelo) se instala pero no se activa: ver docs/TREND_RIDER.md.
-for unit in ingresosbot.service ingresosbot-web.service ingresosbot-trend.service; do
+# ingresosbot-trend.service (Trend Rider en paralelo) e ingresosbot-ai.service (agentes de IA) se instalan
+# pero no se activan: ver docs/TREND_RIDER.md y docs/AGENTES_IA.md.
+for unit in ingresosbot.service ingresosbot-web.service ingresosbot-trend.service ingresosbot-ai.service; do
   sed -e "s|/opt/Ingresosbot|$APP_DIR|g" \
       -e "s|^User=.*|User=$APP_USER|" \
       -e "s|^Group=.*|Group=$APP_USER|" \

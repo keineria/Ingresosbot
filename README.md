@@ -13,6 +13,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 
 **Perfil paralelo Trend Rider** ([SKILL_4](skills/SKILL_4_trend_rider.md), `--params '{"strategy": "trend"}'`): misma Capa 1; entra por ruptura del máximo de 20 velas sobre la EMA200 y sale con trailing stop a 4 ATR, sin TP fijo ni Break-Even. Las reglas oficiales siguen siendo el valor por defecto. Investigación, validación y cómo correrlo al lado del oficial: [docs/TREND_RIDER.md](docs/TREND_RIDER.md). Resultados con datos de 2024-2026 y 500 USD: [docs/LAB_2024_2026.md](docs/LAB_2024_2026.md). Filtros de noticias y sentimiento (Fear & Greed, días FOMC/CPI) probados y descartados: [docs/FILTRO_SENTIMIENTO.md](docs/FILTRO_SENTIMIENTO.md).
 
+**Agentes de IA** (`ai_agents.py`, apagados por defecto): vigía de noticias que puede sugerir una pausa de entradas (la apruebas con un botón de Telegram), analista que vota cada señal en sombra, auditor de operaciones con una hipótesis al mes como máximo y resumen diario. Solo pueden endurecer las reglas, nunca abrir operaciones ni tocar el riesgo. Cómo activarlos y cuánto cuestan: [docs/AGENTES_IA.md](docs/AGENTES_IA.md).
+
 ## Módulos
 
 | Archivo | Qué hace |

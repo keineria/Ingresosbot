@@ -14,6 +14,10 @@ Dos ciclos:
 
 Cada evento se envía con notifier.py (webhook n8n y/o Telegram).
 
+Agentes de IA (ai_agents.py, apagados salvo AI_ENABLED=true en .env): solo pueden endurecer. Una pausa del vigía
+aprobada entra a la Capa 1 como external_risk "halt", y el analista vota cada señal (en sombra no bloquea nada).
+Si la IA falla o tarda, el bot sigue con sus reglas.
+
 Perfil Trend Rider (Params.strategy = "trend", SKILL_4): al cierre de cada vela, después de revisar SL con la vela,
 el trailing stop sube con el máximo desde la entrada (evento TRAILING_STOP). Para correrlo en paralelo al oficial
 usa otra base: python bot_runner.py --db data/trend_state.db --interval 4h --params deploy/trend_params.json
@@ -40,6 +44,7 @@ import pandas as pd
 
 import quant_core_engine as q
 from market_fetcher import INTERVAL_MS, FetchError, fetch_candles, fetch_price
+from ai_agents import AIGate
 from notifier import Notifier, load_env_file
 from state_manager import StateManager
 
@@ -66,7 +71,8 @@ class BotRunner:
     def __init__(self, cfg: RunnerConfig, params: q.Params | None = None, notifier: Notifier | None = None,
                  candle_source: Callable[[str, str, int], pd.DataFrame] | None = None,
                  price_source: Callable[[str], float] | None = None,
-                 clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep):
+                 clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep,
+                 ai_gate: AIGate | None = None):
         if cfg.interval not in INTERVAL_MS:
             raise ValueError(f"Temporalidad no soportada: {cfg.interval}")
         self.cfg = cfg
@@ -82,6 +88,13 @@ class BotRunner:
             cfg.candles_limit = max(cfg.candles_limit, (self.p.daily_sma_len + 3) * (86_400_000 // self.step))
         self.max_price_gap = cfg.max_price_gap_pct / 100.0
         self.sm = StateManager(cfg.db_path, cfg.initial_balance, self.p, cfg.fee_pct)
+        if ai_gate is None:
+            try:
+                ai_gate = AIGate.from_env(cfg.db_path, cfg.interval, clock)
+            except Exception as exc:          # sin IA el bot funciona igual
+                log.warning("IA desactivada por un error al iniciarla: %s", exc)
+                ai_gate = AIGate(Path(cfg.db_path).stem)
+        self.ai = ai_gate
         self._seen_transitions = 0
         self._stop = False
 
@@ -196,7 +209,11 @@ class BotRunner:
             log.warning("%s: precio en vivo %.4f se aleja %.1f%% del cierre %.4f; se usa el cierre",
                         symbol, entry, abs(entry / close - 1) * 100, close)
             entry = None
-        result = q.run_engine(self.sm.engine_account(), candles=df, symbol=symbol,
+        account = self.sm.engine_account()
+        ext = self.ai.external_risk()       # pausa del vigía aprobada -> la Capa 1 se pone en HALTED
+        if ext:
+            account["external_risk"] = ext
+        result = q.run_engine(account, candles=df, symbol=symbol,
                               timeframe=self.cfg.interval, entry_price=entry, params=self.p)
         out = {"decision": result["decision"], "regime": result["layer_2_market_regime"].get("regime")}
         if result["decision"] not in ("LONG", "SHORT"):
@@ -210,6 +227,14 @@ class BotRunner:
             out.update(decision="SKIPPED", reason=f"capital comprometido: {self.sm.open_notional():.2f} + "
                                                   f"{needed:.2f} > {capacity:.2f} USD")
             log.info("%s: señal %s omitida (%s)", symbol, result["decision"], out["reason"])
+            return out
+
+        review = self.ai.review_signal(symbol, self.cfg.interval, result, df, bar_close_iso)
+        if review.get("vote"):
+            out["ai_vote"] = review["vote"]
+        if not review["allow"]:
+            out.update(decision="VETOED", reason=f"analista de IA: {review['reason']}")
+            log.info("%s: señal %s vetada por el analista (%s)", symbol, result["decision"], review["reason"])
             return out
 
         pid = self.sm.open_from_engine(result, opened_at=bar_close_iso)
