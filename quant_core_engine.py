@@ -327,6 +327,10 @@ class AccountState:
     daily_drawdown_pct: float = 0.0
     cooldown_candles_remaining: int = 0
     manual_halt: bool = False          # kill switch manual (panel web / API)
+    # Filtro externo opcional (risk_gate.py: sentimiento, calendario macro, alertas). Solo endurece la Capa 1:
+    # "halt" bloquea entradas nuevas mientras dure (sin enfriamiento de 15 velas), "throttle" baja el riesgo.
+    external_risk: str = "none"        # "none" | "throttle" | "halt"
+    external_reasons: tuple = ()
 
     @classmethod
     def from_dict(cls, d: dict) -> "AccountState":
@@ -336,6 +340,8 @@ class AccountState:
             daily_drawdown_pct=float(d.get("daily_drawdown_pct", 0.0)),
             cooldown_candles_remaining=int(d.get("cooldown_candles_remaining", 0)),
             manual_halt=bool(d.get("manual_halt", False)),
+            external_risk=str((d.get("external_risk") or {}).get("level", "none")),
+            external_reasons=tuple((d.get("external_risk") or {}).get("reasons", ())),
         )
 
 
@@ -354,6 +360,10 @@ def circuit_breaker(state: AccountState, p: Params) -> dict:
     elif state.cooldown_candles_remaining > 0:
         reasons.append(f"enfriamiento en curso: quedan {state.cooldown_candles_remaining} velas")
         status, cooldown = "HALTED", state.cooldown_candles_remaining
+    elif state.external_risk == "halt" and not (state.consecutive_losses >= p.halt_losses
+                                                 or state.daily_drawdown_pct >= p.halt_dd_pct):
+        reasons.extend(f"filtro externo: {r}" for r in state.external_reasons or ("pausa",))
+        status, cooldown = "HALTED", 0
     else:
         if state.consecutive_losses >= p.halt_losses:
             reasons.append(f"consecutive_losses={state.consecutive_losses} >= {p.halt_losses}")
@@ -366,6 +376,8 @@ def circuit_breaker(state: AccountState, p: Params) -> dict:
                 reasons.append(f"consecutive_losses={state.consecutive_losses} >= {p.throttle_losses}")
             if state.daily_drawdown_pct >= p.throttle_dd_pct:
                 reasons.append(f"daily_drawdown_pct={state.daily_drawdown_pct:.2f}% >= {p.throttle_dd_pct}%")
+            if state.external_risk == "throttle":
+                reasons.extend(f"filtro externo: {r}" for r in state.external_reasons or ("riesgo reducido",))
             status = "THROTTLED" if reasons else "ACTIVE"
             cooldown = 0
             if not reasons:
@@ -381,6 +393,7 @@ def circuit_breaker(state: AccountState, p: Params) -> dict:
         "daily_drawdown_pct": round(state.daily_drawdown_pct, 4),
         "reasons": reasons,
         "manual_halt": state.manual_halt,
+        "external_risk": state.external_risk,
         "abort_analysis": status == "HALTED",
     }
 

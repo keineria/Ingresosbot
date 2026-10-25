@@ -127,3 +127,22 @@ Con `abort_analysis = true`, el JSON final lleva `"decision": "HALTED"`, `"order
 - El estado de la cuenta debe venir del exchange (o del ejecutor), no de la memoria de la conversación.
 - Nunca saltarse un HALTED "porque el setup es muy bueno". El escenario 3 de la demo lo prueba: el mismo gráfico que da un LONG válido queda bloqueado si la cuenta lleva 3 pérdidas.
 - Tras cada HALTED, revisar los 3 trades perdedores (régimen en el que entraron, RSI, extensión) antes de tocar parámetros.
+
+## 9. Filtro externo opcional (apagado por defecto)
+
+El estado de la cuenta puede traer un campo `external_risk` con un filtro de fuera del gráfico (sentimiento, calendario macro, alertas). **Solo puede endurecer la Capa 1, nunca ablandarla**, y el orden de capas no cambia:
+
+```json
+{"balance": 500.0, "consecutive_losses": 0, "daily_drawdown_pct": 0.0,
+ "external_risk": {"level": "halt", "reasons": ["día de FOMC/CPI"]}}
+```
+
+| `level` | Efecto |
+|---|---|
+| `none` (o sin campo) | Ninguno: la Capa 1 funciona como en las secciones 1-8 |
+| `throttle` | Si la cuenta estaba ACTIVE pasa a THROTTLED (riesgo 0.75%) |
+| `halt` | HALTED mientras el filtro siga activo, sin enfriamiento de 15 velas; no cierra posiciones abiertas |
+
+Si a la vez hay 3 pérdidas o 3% de DD, mandan esas reglas (HALTED con enfriamiento). Kill switch y enfriamiento en curso también tienen prioridad. Cada motivo aparece en `reasons` como `"filtro externo: ..."`.
+
+El bot 24/7 **no** usa este filtro: en 2024-2026 ningún filtro de sentimiento ni de días FOMC/CPI mejoró a Trend Rider de forma robusta (ver `docs/FILTRO_SENTIMIENTO.md` y `sentiment_lab.py`).
