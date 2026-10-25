@@ -21,7 +21,7 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `backtester.py` | Backtest vela a vela con engine + state_manager, comisión 0.08% por orden |
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
 | `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
-| `web_server.py` + `static/index.html` | Panel dark mode y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |
+| `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |
 
 ```bash
 pip install pandas numpy

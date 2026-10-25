@@ -11,7 +11,8 @@ Autenticación: DASHBOARD_ACCESS_KEY en .env, enviada en la cabecera `X-Access-K
 Endpoints:
   GET  /                 dashboard (static/index.html; la página pide la clave)
   GET  /healthz          {"ok": true} sin clave, para monitoreo
-  GET  /api/state        cuenta, exposición, runner_meta, posiciones (con precio actual) y últimos 20 trades
+  GET  /api/state        cuenta, exposición, runner_meta, posiciones (con precio actual), últimos 20 trades,
+                         PnL de hoy/semana/mes (UTC), curva de balance y precio actual de cada par
   POST /api/scan-now     diagnóstico de las 3 capas en cada par configurado (no abre órdenes)
   POST /api/kill-switch  {"action": "halt" | "resume" | "toggle", "reason": "..."}
 
@@ -111,6 +112,11 @@ class DashboardApp:
             trades = sm.trades(last=20)
             metrics = sm.metrics()
             control = sm.control_log(10)
+            now = pd.Timestamp(self.clock(), unit="s", tz="UTC")
+            day = now.normalize()
+            starts = {"today": day, "week": day - pd.Timedelta(days=day.dayofweek), "month": day.replace(day=1)}
+            periods = {k: sm.pnl_since(v.isoformat()) | {"since": v.isoformat()} for k, v in starts.items()}
+            curve = sm.balance_curve()
 
         prices = {}
         for pos in positions:
@@ -121,6 +127,7 @@ class DashboardApp:
                                          if price is not None else None)
             pos["notional_usd"] = round(pos["position_units"] * pos["entry_price"], 2)
         bar_ms = int(last_bar) if last_bar else None
+        market = {s: {"price": prices[s] if s in prices else self._price(s)} for s in self.cfg.symbols}
         return {
             "server_time": pd.Timestamp(self.clock(), unit="s", tz="UTC").isoformat(),
             "config": {"symbols": self.cfg.symbols, "interval": self.cfg.interval,
@@ -136,6 +143,9 @@ class DashboardApp:
                        "last_bar_open": pd.Timestamp(bar_ms, unit="ms", tz="UTC").isoformat() if bar_ms else None,
                        "last_cycle": json.loads(last_cycle) if last_cycle else None},
             "metrics": metrics,
+            "periods": periods,
+            "balance_curve": curve,
+            "market": market,
             "open_positions": positions,
             "recent_trades": trades,
             "last_scan": json.loads(last_scan) if last_scan else None,
@@ -160,14 +170,17 @@ class DashboardApp:
                     results[symbol] = {
                         "decision": r["decision"],
                         "candle_time": r["candle_time"],
+                        "closes": [round(float(c), 8) for c in q.normalize_ohlcv(df)["close"].tail(48)],
                         "position_open": symbol in open_syms,
                         "would_open": r["decision"] in ("LONG", "SHORT") and symbol not in open_syms,
                         "layer_1": {k: r["layer_1_circuit_breaker"][k] for k in ("status", "risk_pct", "reasons")},
-                        "layer_2": ({k: mr[k] for k in ("regime", "signal", "indicators", "blocking_filters")}
+                        "layer_2": ({k: mr.get(k) for k in ("regime", "signal", "indicators", "long_checks",
+                                                          "short_checks", "blocking_filters")}
                                     if mr.get("evaluated") else {"evaluated": False, "reason": mr.get("reason")}),
-                        "layer_3": ({k: rk[k] for k in ("side", "entry_price", "stop_loss", "take_profit",
+                        "layer_3": ({k: rk.get(k) for k in ("side", "entry_price", "stop_loss", "take_profit",
                                                           "break_even_trigger", "break_even_new_sl",
-                                                          "position_size_usd", "quantity", "risk_usd_effective")}
+                                                          "position_size_usd", "quantity", "risk_usd_effective",
+                                                          "sl_distance_pct", "reward_risk_ratio")}
                                     if rk.get("evaluated") else {"evaluated": False, "reason": rk.get("reason")}),
                     }
                 except Exception as exc:
@@ -260,7 +273,7 @@ def make_handler(app: DashboardApp) -> type[BaseHTTPRequestHandler]:
                     data = (STATIC_DIR / "index.html").read_bytes()
                     self._headers(HTTPStatus.OK, "text/html; charset=utf-8", len(data))
                     self.send_header("Content-Security-Policy",
-                                     "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+                                     "default-src 'self'; script-src 'self' 'unsafe-inline'; "
                                      "style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; "
                                      "frame-ancestors 'none'")
                     self.end_headers()
