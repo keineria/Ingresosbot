@@ -183,10 +183,12 @@ def run_backtest(df: pd.DataFrame, p: q.Params | None = None, cfg: BacktestConfi
 
 
 def run_portfolio_backtest(datasets: dict[str, pd.DataFrame], p: q.Params | None = None,
-                           cfg: BacktestConfig | None = None, trade_from=None) -> dict:
+                           cfg: BacktestConfig | None = None, trade_from=None, risk_gate=None) -> dict:
     """Varios pares con UNA sola cuenta, como bot_runner.py: el mismo Circuit Breaker para todos, una posición
     por par y nunca más de 85% × max_leverage del balance comprometido entre todos (si no cabe: SKIPPED).
-    La señal se toma al cierre de la vela t y se entra en la apertura de t+1 (en el orden de `datasets`)."""
+    La señal se toma al cierre de la vela t y se entra en la apertura de t+1 (en el orden de `datasets`).
+    risk_gate: función opcional (apertura de la vela) -> {"level": "none"|"throttle"|"halt", "reasons": [...]}
+    que entra a la Capa 1 como filtro externo (ver risk_gate.py). Nunca cierra posiciones abiertas."""
     p = p or q.Params()
     cfg = cfg or BacktestConfig()
     slip = cfg.slippage_pct / 100.0
@@ -201,8 +203,15 @@ def run_portfolio_backtest(datasets: dict[str, pd.DataFrame], p: q.Params | None
     times = [t for t in times if tf is None or t >= tf]
     sm = StateManager(":memory:", cfg.initial_balance, p, cfg.fee_pct)
     pending: list[tuple[str, dict]] = []
-    stats = {"signals": 0, "skipped_by_capital": 0}
+    stats = {"signals": 0, "skipped_by_capital": 0, "blocked_by_gate": 0}
     equity, last_close = [], {}
+
+    def account_at(t):
+        a = sm.engine_account()
+        if risk_gate is not None:
+            a["external_risk"] = risk_gate(t)
+        return a
+
     for t in times:
         sm.on_new_bar(t)
         bars = {s: d.loc[t] for s, d in ind.items() if t in d.index}
@@ -211,7 +220,7 @@ def run_portfolio_backtest(datasets: dict[str, pd.DataFrame], p: q.Params | None
                 continue
             o = float(bars[s]["open"])
             d = 1 if q.evaluate_layer2(vals, p)["signal"] == "LONG" else -1
-            r = q.run_engine(sm.engine_account(), manual=vals, symbol=s, entry_price=o * (1 + slip * d), params=p)
+            r = q.run_engine(account_at(t), manual=vals, symbol=s, entry_price=o * (1 + slip * d), params=p)
             if r["decision"] not in ("LONG", "SHORT"):
                 continue
             cap = sm.account()["balance"] * p.max_allocation_pct / 100.0 * p.max_leverage
@@ -233,10 +242,14 @@ def run_portfolio_backtest(datasets: dict[str, pd.DataFrame], p: q.Params | None
             vals = {k: float(b[k]) for k in cols}
             if any(np.isnan(v) for v in vals.values()) or vals["atr14"] <= 0:
                 continue
-            r = q.run_engine(sm.engine_account(), manual=vals, symbol=s, params=p)
+            r = q.run_engine(account_at(t), manual=vals, symbol=s, params=p)
             if r["decision"] in ("LONG", "SHORT"):
                 stats["signals"] += 1
                 pending.append((s, vals))
+            elif (r["decision"] == "HALTED"
+                  and any(x.startswith("filtro externo") for x in r["layer_1_circuit_breaker"]["reasons"])
+                  and q.evaluate_layer2(vals, p)["signal"] in ("LONG", "SHORT")):
+                stats["blocked_by_gate"] += 1
     for pos in sm.positions():
         sm.close_position(pos["id"], last_close[pos["symbol"]], "END_OF_DATA", times[-1])
     tdf = pd.DataFrame(sm.trades())
@@ -254,6 +267,7 @@ def run_portfolio_backtest(datasets: dict[str, pd.DataFrame], p: q.Params | None
            "total_fees_usd": round(float(tdf.fees_usd.sum()), 2) if n else 0.0,
            "halted_activations": sum(1 for x in sm.status_transitions if x["to"] == "HALTED"),
            "signals": stats["signals"], "skipped_by_capital": stats["skipped_by_capital"],
+           "blocked_by_gate": stats["blocked_by_gate"],
            "by_symbol": ({k: {"trades": int(len(g)), "pnl_usd": round(float(g.pnl_usd.sum()), 2)}
                           for k, g in tdf.groupby("symbol")} if n else {}),
            "by_year": ({k: round(float(g.pnl_usd.sum()), 2) for k, g in
