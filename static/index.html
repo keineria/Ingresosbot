@@ -314,7 +314,9 @@
     .live::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--c); border-radius: 16px 16px 0 0; }
     .live .lh { display: flex; align-items: flex-start; gap: 10px; padding: 15px 16px 12px; }
     .live .lh h3 { margin: 0; font-size: 16px; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
-    .live .lh .sw { width: 10px; height: 10px; border-radius: 50%; background: var(--c); flex: none; }
+    .live .lh .av { width: 38px; height: 38px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 750; font-size: 16px;
+                    color: #fff; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent); }
+    .live .lh .meta b { color: var(--ink-2); font-weight: 600; }
     .live .lh .meta { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
     .live .lh .pills { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
     .live .pill.run::before { animation: pulse 2s infinite; }
@@ -412,6 +414,7 @@
       </div>
     </section>
     <div id="ov-grid" class="ov-grid" aria-label="Bots"></div>
+    <div id="chain-ov"></div>
   </div>
 
   <!-- Un bot en detalle -->
@@ -461,14 +464,15 @@
     </div>
   </section>
 
-  <!-- Cadena de decisión -->
-  <section>
+  <!-- Cadena de decisión: en "Todos los bots" va debajo de las tarjetas (con selector de bot); en el detalle, aquí -->
+  <section id="chain">
     <div class="section-h">
       <div>
-        <h2>Cadena de decisión</h2>
+        <h2>Cadena de decisión<span id="chain-who" class="faint" style="font-weight:600"></span></h2>
         <p>Cada par pasa por las 3 capas en orden: Capa 1 protege la cuenta, Capa 2 lee el mercado y Capa 3 calcula el riesgo. <span id="scan-when" class="faint"></span></p>
       </div>
       <div class="tools">
+        <div id="chain-bot" class="seg hidden" role="group" aria-label="Bot"></div>
         <div id="sym-seg" class="seg" role="group" aria-label="Par"></div>
         <button id="btn-scan" class="btn primary sm"><svg class="i"><use href="#i-scan"/></svg>Escanear ahora</button>
       </div>
@@ -504,6 +508,8 @@
       </div>
     </div>
   </section>
+
+  <div id="chain-home"></div>
 
   <!-- Pestañas -->
   <nav class="tabs" role="tablist">
@@ -687,10 +693,11 @@
   function render(s) {
     state = s;
     const bt = s.bot || {};
-    $('bot-title').textContent = bots && bots.length > 1 ? bt.name : 'En vivo';
-    document.title = (bots && bots.length > 1 ? bt.name + ' · ' : '') + 'Ingresosbot · Panel';
+    $('bot-title').textContent = bots && bots.length > 1 ? whoFull(bt) : 'En vivo';
+    $('chain-who').textContent = bots && bots.length > 1 ? ' · ' + who(bt) : '';
+    if (view !== 'all') document.title = (bots && bots.length > 1 ? who(bt) + ' · ' : '') + 'Ingresosbot · Panel';
     $('strat').classList.toggle('hidden', !bt.summary);
-    $('strat-title').textContent = 'Cómo opera ' + (bt.name || 'el bot');
+    $('strat-title').textContent = bt.trader ? 'Cómo opera ' + bt.trader + ' (' + bt.name + ')' : 'Cómo opera ' + (bt.name || 'el bot');
     $('strat-sum').textContent = bt.summary || '';
     $('strat-how').innerHTML = (bt.how || []).map((h) => `<li>${esc(h)}</li>`).join('');
     $('strat-bt').innerHTML = bt.backtest ? '<b>Prueba con datos reales:</b> ' + esc(bt.backtest) : '';
@@ -707,7 +714,7 @@
     if (hl) { hb.className = 'pill ' + hl[1] + (health === 'running' ? ' hidden' : ''); hb.textContent = 'Proceso: ' + hl[0].toLowerCase(); }
     $('live-dot').className = 'live-dot' + ((a.status === 'ACTIVE' || a.status === 'THROTTLED') && (!health || health === 'running') ? '' : ' off');
     const kill = $('btn-kill');
-    kill.className = 'btn ' + (a.manual_halt ? 'resume' : 'danger');
+    kill.className = 'btn ' + (a.manual_halt ? 'resume' : 'danger') + (view === 'all' ? ' hidden' : '');
     kill.querySelector('span').textContent = a.manual_halt ? 'Reactivar' : 'Kill Switch';
 
     const r = s.runner || {};
@@ -1145,6 +1152,10 @@
     const slot = Number.isInteger(b.color) && b.color >= 1 && b.color <= 8 ? b.color : (i % 8) + 1;
     return `var(--series-${slot})`;
   };
+  // Cada bot puede llevar nombre de persona ("trader" en bots.json): "Juan" opera la estrategia "Bot Oficial".
+  const who = (b) => (b && (b.trader || b.name)) || '';
+  const whoFull = (b) => b && b.trader ? b.trader + ' · ' + b.name : (b ? b.name : '');
+  const initial = (b) => esc(who(b).trim().charAt(0).toUpperCase() || '?');
   const HEALTH = { running: ['Funcionando', 's-good run'], stopped: ['Apagado', 's-bad'], never: ['Sin encender', 's-mute'],
                    stale: ['Sin señal', 's-warn'] };
   const healthOf = (b) => b.error ? ['Error', 's-bad'] : (HEALTH[b.runner && b.runner.health] || ['—', 's-mute']);
@@ -1170,11 +1181,12 @@
 
   function renderViews() {
     const list = bots || [];
+    $('chain-bot').innerHTML = list.map((b) => `<button type="button" data-bot="${esc(b.id)}" aria-pressed="${b.id === botId}" title="${esc(whoFull(b))}">${esc(who(b))}</button>`).join('');
     $('views').innerHTML = `<button type="button" data-view="all" aria-current="${view === 'all'}">Todos los bots</button>` +
       list.map((b) => {
         const h = b.runner && b.runner.health;
-        return `<button type="button" data-view="${esc(b.id)}" aria-current="${view === b.id}" style="--c:${color(b)}">
-          <span class="sw${h === 'running' ? '' : ' off'}"></span>${esc(b.name)}
+        return `<button type="button" data-view="${esc(b.id)}" aria-current="${view === b.id}" style="--c:${color(b)}" title="${esc(whoFull(b))}">
+          <span class="sw${h === 'running' ? '' : ' off'}"></span>${esc(who(b))}
           <span class="ret ${tone(b.return_pct)}">${nil(b.return_pct) ? '' : signed(b.return_pct, 1) + '%'}</span></button>`;
       }).join('');
   }
@@ -1191,11 +1203,18 @@
   }
   function applyView() {
     const all = view === 'all';
+    const chain = $('chain'), home = all ? $('chain-ov') : $('chain-home');
+    if (chain.parentNode !== home) { home.appendChild(chain); requestAnimationFrame(drawWires); }
+    $('chain-bot').classList.toggle('hidden', !all || !bots || bots.length < 2);
     $('overview').classList.toggle('hidden', !all);
     $('detail').classList.toggle('hidden', all);
     $('btn-kill').classList.toggle('hidden', all);
     if (all) document.title = 'Todos los bots · Ingresosbot';
   }
+  $('chain-bot').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-bot]'); if (!b || b.dataset.bot === botId) return;
+    botId = b.dataset.bot; store.set(BOT, botId); scan = null; renderViews(); refresh();
+  });
   window.addEventListener('hashchange', () => setView(decodeURIComponent(location.hash.slice(1)) || 'all'));
 
   // ── Vista "Todos los bots" ──
@@ -1213,7 +1232,7 @@
     // KPIs de conjunto (sin sumar capitales distintos: cada bot tiene su propio inicial).
     $('o-run').textContent = running.length + ' de ' + list.length;
     const off = list.filter((b) => !running.includes(b));
-    $('o-run-f').innerHTML = off.length ? esc(off.map((b) => b.name + ': ' + healthOf(b)[0].toLowerCase()).join(' · ')) : 'todos con latido reciente';
+    $('o-run-f').innerHTML = off.length ? esc(off.map((b) => who(b) + ': ' + healthOf(b)[0].toLowerCase()).join(' · ')) : 'todos con latido reciente';
     const npos = ok.reduce((n, b) => n + b.open_positions.length, 0);
     const unreal = ok.reduce((n, b) => n + (b.unrealized_pnl_usd || 0), 0);
     $('o-pos').textContent = npos;
@@ -1222,7 +1241,7 @@
     $('o-ops').textContent = nops;
     $('o-ops-f').textContent = 'hoy ' + today + ' · entre todos los bots';
     const best = ok.filter((b) => !nil(b.return_pct)).sort((a, b) => b.return_pct - a.return_pct)[0];
-    $('o-best').innerHTML = best ? esc(best.name) : '—';
+    $('o-best').innerHTML = best ? esc(who(best)) : '—';
     $('o-best-f').innerHTML = best ? chip(best.return_pct) + '<span>valor de la cuenta vs. su inicial</span>' : '';
 
     $('ov-grid').innerHTML = list.map(liveCard).join('') + addBotCard();
@@ -1232,8 +1251,8 @@
   function liveCard(b) {
     const c = color(b), h = healthOf(b);
     const syms = (b.symbols || []).map(short).join(' · ');
-    const head = `<header class="lh"><div style="min-width:0"><h3><span class="sw"></span>${esc(b.name)}</h3>
-        <div class="meta">${esc(b.interval || '')}${syms ? ' · ' + esc(syms) : ''}</div></div>
+    const head = `<header class="lh"><span class="av">${initial(b)}</span><div style="min-width:0"><h3>${esc(who(b))}</h3>
+        <div class="meta">${b.trader ? '<b>' + esc(b.name) + '</b> · ' : ''}${esc(b.interval || '')}${syms ? ' · ' + esc(syms) : ''}</div></div>
         <div class="pills">${pill(h[0], h[1])}${b.account ? pill('Capa 1 · ' + l1Of(b)[0], l1Of(b)[1], true) : ''}</div></header>`;
     const foot = `<footer><span class="sum">${esc(b.summary || '')}</span>
         <button type="button" class="btn sm" data-view="${esc(b.id)}">Ver detalle</button></footer>`;
@@ -1328,7 +1347,7 @@
       pts.push({ t: now, v: b.return_pct || 0, live: true });
       return { b, c: color(b), pts };
     });
-    $('cmp-legend').innerHTML = series.map((x) => `<span style="--c:${x.c}"><i></i>${esc(x.b.name)} <b class="${tone(x.b.return_pct)}">${signed(x.b.return_pct)}%</b></span>`).join('');
+    $('cmp-legend').innerHTML = series.map((x) => `<span style="--c:${x.c}" title="${esc(whoFull(x.b))}"><i></i>${esc(who(x.b))} <b class="${tone(x.b.return_pct)}">${signed(x.b.return_pct)}%</b></span>`).join('');
     const t0 = Math.min(now - 86400000, ...series.map((x) => x.pts[0].t));
     const W = svg.clientWidth || 600, H = Math.max(230, svg.clientHeight || 230), narrow = W < 520;
     const pl = 50, pr = narrow ? 14 : 104, pt = 14, pb = 26;
@@ -1351,7 +1370,7 @@
       <line class="base" x1="${pl}" x2="${W - pr}" y1="${Y(0)}" y2="${Y(0)}"/>
       ${series.map((x) => `<path d="${path(x.pts)}" fill="none" stroke="${x.c}" stroke-width="2" stroke-linejoin="round"/>
         <circle cx="${X(now)}" cy="${Y(x.pts[x.pts.length - 1].v)}" r="4" fill="${x.c}" stroke="var(--card-solid)" stroke-width="2"/>`).join('')}
-      ${labels.map((l) => `<text x="${X(now) + 9}" y="${l.y + 4}" font-size="11.5" fill="var(--ink-2)">${esc(l.x.b.name.length > 13 ? l.x.b.name.slice(0, 12) + '…' : l.x.b.name)}</text>`).join('')}
+      ${labels.map((l) => `<text x="${X(now) + 9}" y="${l.y + 4}" font-size="11.5" fill="var(--ink-2)">${esc(who(l.x.b).length > 13 ? who(l.x.b).slice(0, 12) + '…' : who(l.x.b))}</text>`).join('')}
       <g id="cmp-cross" style="display:none"><line id="cmp-cx" y1="${pt}" y2="${H - pb}" stroke="var(--ink-3)" stroke-dasharray="3 4"/></g>
       <rect x="${pl}" y="0" width="${W - pl - pr}" height="${H}" fill="transparent" id="cmp-hit"/>`;
     const valAt = (pts, t) => { if (t < pts[0].t) return null; let v = pts[0].v; for (const p of pts) { if (p.t <= t) v = p.v; else break; } return v; };
@@ -1362,7 +1381,7 @@
       cross.style.display = ''; svg.querySelector('#cmp-cx').setAttribute('x1', x); svg.querySelector('#cmp-cx').setAttribute('x2', x);
       tip.innerHTML = `<div class="faint">${esc(localTime(new Date(t).toISOString()))}</div>` + series.map((s2) => {
         const v = valAt(s2.pts, t);
-        return `<div><span style="color:${s2.c}">●</span> ${esc(s2.b.name)} <b class="num">${v === null ? 'aún no operaba' : signed(v) + '%'}</b></div>`;
+        return `<div><span style="color:${s2.c}">●</span> ${esc(who(s2.b))} <b class="num">${v === null ? 'aún no operaba' : signed(v) + '%'}</b></div>`;
       }).join('');
       tip.style.left = Math.max(90, Math.min(W - 90, x)) + 'px'; tip.style.top = pt + 40 + 'px';
       tip.classList.remove('hidden');
@@ -1380,9 +1399,11 @@
       overview = await api('/api/overview');
       bots = overview.bots || [];
       if (view !== 'all' && !bots.some((b) => b.id === view)) { view = 'all'; history.replaceState(null, '', location.pathname); }
+      if (view !== 'all') botId = view;
+      if (!bots.some((b) => b.id === botId)) botId = overview.default || (bots[0] && bots[0].id) || '';
       applyView(); renderViews();
       if (view === 'all') renderOverview();
-      else { botId = view; render(await api(withBot('/api/state'))); }
+      render(await api(withBot('/api/state')));   // la cadena de decisión (y el detalle) del bot elegido
       showError('');
     } catch (e) { showError(e.message); }
   }
@@ -1398,8 +1419,8 @@
   let halting = true;
   $('btn-kill').addEventListener('click', () => {
     halting = !(state && state.account.manual_halt);
-    const who = state && state.bot && bots && bots.length > 1 ? ' de ' + state.bot.name : '';
-    $('kill-title').textContent = (halting ? '¿Activar el Kill Switch' : '¿Desactivar el Kill Switch') + who + '?';
+    const whom = state && state.bot && bots && bots.length > 1 ? ' de ' + who(state.bot) : '';
+    $('kill-title').textContent = (halting ? '¿Activar el Kill Switch' : '¿Desactivar el Kill Switch') + whom + '?';
     $('kill-text').textContent = halting
       ? 'El bot no abrirá posiciones nuevas. Las que ya están abiertas conservan su stop loss y take profit.'
       : 'El estado volverá a lo que digan las reglas del Circuit Breaker (Capa 1).';

@@ -16,6 +16,13 @@ solas cada 15 segundos (los contadores de "hace X" y "próxima vela en X" se mue
 | **Posiciones abiertas** | Entrada → precio actual, ganancia o pérdida sin cerrar, stop loss y si ya va con trailing o Break-Even. |
 | **Últimas operaciones** | Las 3 últimas cerradas, con su resultado en $ y en R. |
 
+Cada bot lleva un **nombre de persona** (campo `trader` en `deploy/bots.json`): Juan opera el Bot Oficial, Keiner
+opera Trend Rider y Óscar opera Tortuga 55. Se cambian editando ese campo; el nombre de la estrategia (`name`) sigue
+debajo para no perder la referencia.
+
+Debajo de las tarjetas sigue la **Cadena de decisión** (Datos → Capa 1 → Capa 2 → Capa 3 → Ejecución), con un
+selector para ver la de cada bot y el botón "Escanear ahora".
+
 Arriba, **Rendimiento comparado** dibuja el % de cada bot sobre su propio capital inicial (el Bot Oficial empezó con
 10.000 y los otros con 500, por eso se compara en %, no en dólares). Cada bot tiene siempre el mismo color.
 
@@ -33,6 +40,7 @@ No hace falta tocar el panel ni crear otro archivo de servicio.
    {
      "id": "cuarto",
      "name": "Mi cuarto bot",
+     "trader": "Ana",
      "service": "ingresosbot-bot@cuarto",
      "db": "data/cuarto_state.db",
      "interval": "4h",
@@ -46,6 +54,7 @@ No hace falta tocar el panel ni crear otro archivo de servicio.
    ```
 
    - `id`: sin espacios ni tildes (se usa en el nombre del servicio).
+   - `trader`: el nombre de persona con el que aparece en el panel (opcional).
    - `db`: una base **nueva** para ese bot; nunca la de otro.
    - `params`: un JSON con los parámetros de la estrategia (como `deploy/tortuga_params.json`), o quítalo para usar las reglas oficiales.
    - `color` (opcional): del 1 al 8 para fijar su color en el panel; si no, toma el siguiente libre por orden.

@@ -54,6 +54,7 @@ class TestBotsFile(unittest.TestCase):
         self.assertEqual([b["id"] for b in bots], ["oficial", "trend", "tortuga"])
         for b in bots:
             self.assertTrue(b["summary"] and b["how"] and b["backtest"], b["id"])
+            self.assertTrue(b.get("trader"), b["id"])           # nombre de persona en el panel
             if b.get("params"):
                 self.assertTrue((ROOT / b["params"]).exists(), b["params"])
         cfg, p = bot_settings(find_bot("tortuga", ROOT / "deploy" / "bots.json"))
@@ -188,7 +189,8 @@ class TestLiveOverview(unittest.TestCase):
         self.now = pd.Timestamp("2026-10-25T13:30:00Z").timestamp()
         self.services = {"ingresosbot-trend": "active", "ingresosbot-tortuga": "inactive"}
         self.bots = [
-            {"id": "trend", "name": "Trend Rider", "service": "ingresosbot-trend", "db": str(self.d / "tr.db"),
+            {"id": "trend", "name": "Trend Rider", "trader": "Keiner", "service": "ingresosbot-trend",
+             "db": str(self.d / "tr.db"),
              "interval": "4h", "symbols": ["BTCUSDT", "ETHUSDT"], "balance": 500,
              "params": str(ROOT / "deploy" / "trend_params.json")},
             {"id": "tortuga", "name": "Tortuga 55", "service": "ingresosbot-tortuga", "db": str(self.d / "to.db"),
@@ -229,6 +231,7 @@ class TestLiveOverview(unittest.TestCase):
                          ("running", 50, "2026-10-25T16:00:00+00:00"))
         self.assertEqual(r["decisions"]["ETHUSDT"], {"decision": "WAIT / NO_TRADE", "blocking": ["breakout"]})
         self.assertEqual(t["limits"]["halt_losses"], 3)
+        self.assertEqual((t["trader"], t["name"]), ("Keiner", "Trend Rider"))
         # Tortuga: base nueva, servicio apagado.
         self.assertEqual((to["runner"]["health"], to["equity"], to["color"]), ("stopped", 500.0, 3))
         self.assertEqual(to["runner"]["next_bar_close"], "2026-10-26T00:00:00+00:00")
