@@ -14,6 +14,10 @@ Dos ciclos:
 
 Cada evento se envía con notifier.py (webhook n8n y/o Telegram).
 
+Perfil Trend Rider (Params.strategy = "trend", SKILL_4): al cierre de cada vela, después de revisar SL con la vela,
+el trailing stop sube con el máximo desde la entrada (evento TRAILING_STOP). Para correrlo en paralelo al oficial
+usa otra base: python bot_runner.py --db data/trend_state.db --interval 4h --params deploy/trend_params.json
+
 Uso en el VPS:
   python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --balance 10000 --env-file .env
   python bot_runner.py --once           # un ciclo de vela + uno de vigilancia y termina (pruebas / cron)
@@ -68,10 +72,14 @@ class BotRunner:
         self.cfg = cfg
         self.p = params or q.Params()
         self.notifier = notifier or Notifier.from_env()
+        if self.p.strategy == "trend" and not self.notifier.label:
+            self.notifier.label = "Trend Rider"     # que las alertas de los dos bots no se confundan
         self.candle_source = candle_source or self._default_candles
         self.price_source = price_source or (lambda s: fetch_price(s)[0])
         self.clock, self.sleep = clock, sleep
         self.step = INTERVAL_MS[cfg.interval]
+        if self.p.daily_sma_len > 0:      # el filtro diario necesita N días completos de velas
+            cfg.candles_limit = max(cfg.candles_limit, (self.p.daily_sma_len + 3) * (86_400_000 // self.step))
         self.max_price_gap = cfg.max_price_gap_pct / 100.0
         self.sm = StateManager(cfg.db_path, cfg.initial_balance, self.p, cfg.fee_pct)
         self._seen_transitions = 0
@@ -102,6 +110,9 @@ class BotRunner:
             if ev["event"] == "BREAK_EVEN":
                 log.info("Break-Even posición %s -> SL %s", ev["position_id"], ev["new_stop_loss"])
                 self.notifier.break_even(ev["position"], ev.get("price"))
+            elif ev["event"] == "TRAILING_STOP":
+                log.info("Trailing posición %s: SL %s -> %s", ev["position_id"], ev["old_stop_loss"], ev["new_stop_loss"])
+                self.notifier.trailing_stop(ev)
             elif ev["event"] == "CLOSE":
                 log.info("Cerrada %s %s %s PnL %.2f", ev["symbol"], ev["side"], ev["result"], ev["pnl_usd"])
                 self.notifier.position_closed(ev, self.sm.account())
@@ -151,11 +162,25 @@ class BotRunner:
             return {"decision": "STALE_DATA", "last_candle": str(last["time"]), "expected": expected.isoformat()}
 
         # Red de seguridad: la vela cerrada pudo tocar SL/TP/BE entre dos sondeos de 15 s.
-        for pos in self.sm.positions(symbol):
-            if pd.Timestamp(last["time"]) >= pd.Timestamp(pos["opened_at"]):
-                self._handle_events(self.sm.process_candle(symbol, last["time"], float(last["open"]),
-                                                           float(last["high"]), float(last["low"]),
-                                                           float(last["close"])))
+        in_bar = [p for p in self.sm.positions(symbol) if pd.Timestamp(last["time"]) >= pd.Timestamp(p["opened_at"])]
+        if in_bar:
+            self._handle_events(self.sm.process_candle(symbol, last["time"], float(last["open"]),
+                                                       float(last["high"]), float(last["low"]),
+                                                       float(last["close"])))
+        # Trailing stop (perfil "trend"): con la vela ya cerrada; rige desde la siguiente.
+        if any(p.get("trail_atr_mult") for p in in_bar) and self.sm.positions(symbol):
+            ind_last = q.compute_indicators(df, self.p).iloc[-1]
+            self._handle_events(self.sm.apply_trailing(symbol, last["time"], float(last["high"]),
+                                                       float(last["low"]), float(ind_last["atr14"])))
+            # Filtro diario dado la vuelta (trend_exit_on_filter): salida a mercado.
+            for pos in self.sm.positions(symbol):
+                if q.trend_exit_signal({k: float(ind_last[k]) for k in q.INDICATOR_KEYS}, pos["side"], self.p):
+                    try:
+                        px = float(self.price_source(symbol))
+                    except Exception:
+                        px = float(last["close"])
+                    ev = self.sm.close_position(pos["id"], px, "SIGNAL_EXIT", bar_close_iso)
+                    self._handle_events([{"event": "CLOSE", **ev}])
         self._flush_status_alerts()
 
         if self.sm.positions(symbol):
@@ -189,8 +214,8 @@ class BotRunner:
 
         pid = self.sm.open_from_engine(result, opened_at=bar_close_iso)
         pos = next(p for p in self.sm.positions(symbol) if p["id"] == pid)
-        log.info("Abierta %s %s @ %.4f (SL %.4f TP %.4f)", symbol, pos["side"], pos["entry_price"],
-                 pos["stop_loss"], pos["take_profit"])
+        log.info("Abierta %s %s @ %.4f (SL %.4f TP %s)", symbol, pos["side"], pos["entry_price"],
+                 pos["stop_loss"], f"{pos['take_profit']:.4f}" if pos["take_profit"] > 0 else "trailing")
         self.notifier.position_opened(pos, self.sm.account())
         out["position_id"] = pid
         return out
