@@ -402,6 +402,18 @@ class StateManager:
                 "net_pnl_pct": round((a["balance"] / a["initial_balance"] - 1) * 100, 2),
                 "total_fees_usd": round(r["fees"], 2)}
 
+    def pnl_since(self, since_iso: str) -> dict:
+        """PnL realizado y nº de cierres desde `since_iso` (ISO UTC, mismo formato que closed_at)."""
+        r = self.conn.execute("SELECT COUNT(*) n, COALESCE(SUM(pnl_usd), 0) pnl FROM trade_history "
+                              "WHERE closed_at >= ?", (since_iso,)).fetchone()
+        return {"pnl_usd": round(r["pnl"], 2), "trades": r["n"]}
+
+    def balance_curve(self, last: int = 300) -> list[dict]:
+        """Balance tras cada cierre (los últimos `last`), en orden cronológico, para la curva del panel."""
+        rows = self.conn.execute("SELECT closed_at, balance_after FROM trade_history ORDER BY id DESC LIMIT ?",
+                                 (last,)).fetchall()
+        return [{"t": r["closed_at"], "balance": r["balance_after"]} for r in reversed(rows)]
+
     def equity(self, prices: dict[str, float]) -> float:
         """Balance + PnL latente de las posiciones abiertas a los precios dados."""
         eq = self.account()["balance"]
