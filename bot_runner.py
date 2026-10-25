@@ -18,6 +18,10 @@ Perfil Trend Rider (Params.strategy = "trend", SKILL_4): al cierre de cada vela,
 el trailing stop sube con el máximo desde la entrada (evento TRAILING_STOP). Para correrlo en paralelo al oficial
 usa otra base: python bot_runner.py --db data/trend_state.db --interval 4h --params deploy/trend_params.json
 
+Varios bots con nombre propio (deploy/bots.json): --bot ID toma de ese archivo la base, la temporalidad, los pares,
+los parámetros y el nombre que antepone a las alertas. Así corre "Tortuga 55" (diario, cripto + oro PAXG):
+  python bot_runner.py --env-file .env --bot tortuga --log-file logs/bot-tortuga.log
+
 Uso en el VPS:
   python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --balance 10000 --env-file .env
   python bot_runner.py --once           # un ciclo de vela + uno de vigilancia y termina (pruebas / cron)
@@ -44,6 +48,10 @@ from notifier import Notifier, load_env_file
 from state_manager import StateManager
 
 log = logging.getLogger("bot_runner")
+
+BOTS_FILE = Path(__file__).resolve().parent / "deploy" / "bots.json"
+RUNNER_INTERVALS = ("1h", "4h", "1d")
+HEARTBEAT_S = 60.0                    # cada cuánto el bucle deja constancia de que sigue vivo (para el panel)
 
 @dataclass
 class RunnerConfig:
@@ -84,6 +92,7 @@ class BotRunner:
         self.sm = StateManager(cfg.db_path, cfg.initial_balance, self.p, cfg.fee_pct)
         self._seen_transitions = 0
         self._stop = False
+        self._last_beat = 0.0
 
     # ── Utilidades ──────────────────────────────────────────────────────────
     def _default_candles(self, symbol: str, interval: str, limit: int) -> pd.DataFrame:
@@ -92,6 +101,16 @@ class BotRunner:
     def last_closed_bar_open_ms(self, now_s: float | None = None) -> int:
         now_ms = int((self.clock() if now_s is None else now_s) * 1000)
         return (now_ms // self.step) * self.step - self.step
+
+    def heartbeat(self, now_s: float) -> None:
+        """Latido para el panel: entre velas de 4h o 1d no hay otra señal de que el bot sigue corriendo."""
+        if now_s - self._last_beat < HEARTBEAT_S:
+            return
+        at = pd.Timestamp(now_s, unit="s", tz="UTC").isoformat()
+        if self.sm.meta_get("started_at") is None:
+            self.sm.meta_set("started_at", at)
+        self.sm.meta_set("heartbeat", at)
+        self._last_beat = now_s
 
     def stop(self, *_):
         self._stop = True
@@ -245,6 +264,7 @@ class BotRunner:
             now = self.clock()
             try:
                 self.watch_cycle(now)
+                self.heartbeat(now)
                 since_close = (now * 1000 - (self.last_closed_bar_open_ms(now) + self.step)) / 1000
                 if since_close >= self.cfg.close_delay_seconds:
                     s = self.candle_cycle(now)
@@ -292,10 +312,49 @@ def settings_from_env(symbols: str | None = None, interval: str | None = None, d
     return cfg, parse_params(params or env("BOT_PARAMS"), no_short)
 
 
+def load_bots(path: str | Path | None = None) -> list[dict]:
+    """Bots con nombre propio (deploy/bots.json). Cada uno: id, name, db y, si no salen del .env,
+    interval, symbols, params y balance; más textos para el panel (summary, how, backtest)."""
+    path = Path(path) if path else BOTS_FILE
+    if not path.exists():
+        return []
+    bots = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(bots, list):
+        raise SystemExit(f"{path}: se esperaba una lista de bots")
+    seen = set()
+    for b in bots:
+        if not isinstance(b, dict) or not b.get("id") or not b.get("name") or not b.get("db"):
+            raise SystemExit(f"{path}: cada bot necesita id, name y db ({b!r})")
+        if b["id"] in seen:
+            raise SystemExit(f"{path}: id repetido {b['id']!r}")
+        seen.add(b["id"])
+    return bots
+
+
+def find_bot(bot_id: str, path: str | Path | None = None) -> dict:
+    for b in load_bots(path):
+        if b["id"] == bot_id:
+            return b
+    raise SystemExit(f"No hay un bot {bot_id!r} en {path or BOTS_FILE}")
+
+
+def bot_settings(bot: dict, no_short: bool = False) -> tuple[RunnerConfig, q.Params]:
+    """Lo que no fija el bot (p. ej. los pares del oficial) sale del .env, como siempre."""
+    syms = bot.get("symbols")
+    if isinstance(syms, list):
+        syms = ",".join(syms)
+    params = bot.get("params")
+    if isinstance(params, dict):
+        params = json.dumps(params)
+    return settings_from_env(syms, bot.get("interval"), bot.get("db"), bot.get("balance"), params, no_short)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Bot 24/7 en paper trading. Sin argumentos usa el .env.")
+    ap.add_argument("--bot", help="Id de un bot de deploy/bots.json (p. ej. tortuga); los demás argumentos mandan")
+    ap.add_argument("--bots-file", help="Otro archivo de bots (por defecto deploy/bots.json)")
     ap.add_argument("--symbols", help="Por defecto BOT_SYMBOLS o BTCUSDT,ETHUSDT,SOLUSDT")
-    ap.add_argument("--interval", choices=["1h", "4h"], help="Por defecto BOT_INTERVAL o 1h")
+    ap.add_argument("--interval", choices=list(RUNNER_INTERVALS), help="Por defecto BOT_INTERVAL o 1h")
     ap.add_argument("--db", help="Por defecto BOT_DB o data/trading_state.db")
     ap.add_argument("--balance", type=float, help="Balance inicial (solo si la base es nueva); BOT_BALANCE")
     ap.add_argument("--fee", type=float, default=0.08)
@@ -315,11 +374,19 @@ def main(argv: list[str] | None = None) -> int:
                         handlers=handlers)
     load_env_file(args.env_file)
 
-    cfg, p = settings_from_env(args.symbols, args.interval, args.db, args.balance, args.params, args.no_short)
-    if cfg.interval not in ("1h", "4h"):
-        raise SystemExit(f"BOT_INTERVAL debe ser 1h o 4h (recibido {cfg.interval})")
+    label = None
+    if args.bot:
+        b = find_bot(args.bot, args.bots_file)
+        label = b["name"]
+        cli = {"symbols": args.symbols, "interval": args.interval, "db": args.db, "balance": args.balance,
+               "params": args.params}
+        cfg, p = bot_settings(b | {k: v for k, v in cli.items() if v is not None}, args.no_short)
+    else:
+        cfg, p = settings_from_env(args.symbols, args.interval, args.db, args.balance, args.params, args.no_short)
+    if cfg.interval not in RUNNER_INTERVALS:
+        raise SystemExit(f"BOT_INTERVAL debe ser uno de {RUNNER_INTERVALS} (recibido {cfg.interval})")
     cfg.fee_pct, cfg.watch_seconds = args.fee, args.watch_seconds
-    bot = BotRunner(cfg, p)
+    bot = BotRunner(cfg, p, notifier=Notifier.from_env(label=label) if label else None)
     if not bot.notifier.enabled:
         log.warning("Sin WEBHOOK_URL ni TELEGRAM_*: las alertas solo irán al log")
     signal.signal(signal.SIGINT, bot.stop)

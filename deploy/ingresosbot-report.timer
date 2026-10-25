@@ -1,0 +1,12 @@
+# Lanza ingresosbot-report.service cada día a las 00:20 UTC (justo después del cierre de la vela diaria).
+#   sudo systemctl enable --now ingresosbot-report.timer
+#   systemctl list-timers ingresosbot-report.timer      # ver la próxima ejecución
+[Unit]
+Description=Ingresosbot informe diario de los bots
+
+[Timer]
+OnCalendar=*-*-* 00:20:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -32,6 +32,9 @@
       --glow: 0 0 0 1px rgba(90, 216, 230, .28), 0 0 42px -6px rgba(59, 130, 246, .45);
       --chart-fill-top: rgba(90, 216, 230, .30);
       --chart-fill-bottom: rgba(90, 216, 230, 0);
+      /* Un color fijo por bot, en el orden de deploy/bots.json (paleta categórica validada para daltonismo). */
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+      --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
     }
     :root[data-theme="light"] {
       --bg: #f4f6fb;
@@ -56,6 +59,8 @@
       --glow: 0 0 0 1px rgba(79, 70, 229, .22), 0 14px 40px -14px rgba(79, 70, 229, .35);
       --chart-fill-top: rgba(79, 70, 229, .20);
       --chart-fill-bottom: rgba(79, 70, 229, 0);
+      --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+      --series-5: #e87ba4; --series-6: #008300; --series-7: #6250d6; --series-8: #e34948;
     }
 
     * { box-sizing: border-box; }
@@ -124,7 +129,7 @@
     .chip.up { color: var(--good); background: var(--good-soft); } .chip.down { color: var(--bad); background: var(--bad-soft); } .chip.flat { color: var(--ink-2); background: var(--inset); }
 
     /* ── Cabecera "En vivo" + KPIs ───────────────────────────────────────── */
-    main { padding: 32px 0 40px; }
+    main.wrap { padding-top: 28px; padding-bottom: 40px; }
     .hero-h { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
     .hero-h h1 { margin: 0; font-size: 28px; letter-spacing: -.02em; font-weight: 700; display: flex; align-items: center; gap: 10px; }
     .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: pulse 2s infinite; }
@@ -144,6 +149,18 @@
     @media (max-width: 1180px) { .kpis { grid-template-columns: repeat(3, 1fr); } .conn { grid-column: span 3; } .conn-grid { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 24px; } }
     @media (max-width: 640px) { .kpis { grid-template-columns: repeat(2, 1fr); } .conn { grid-column: span 2; } .conn-grid { grid-template-columns: 1fr; }
       .kpi.wide-sm { grid-column: span 2; } .hero-h h1 { font-size: 24px; } .kpi .val { font-size: 20px; } }
+
+    /* ── Ficha de estrategia ─────────────────────────────────────────────── */
+    .strat { padding: 0; margin: 0 0 18px; }
+    .strat summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 12px 16px; font-weight: 600; font-size: 13.5px; }
+    .strat summary::-webkit-details-marker { display: none; }
+    .strat summary .i { color: var(--accent); }
+    .strat summary::after { content: "▾"; margin-left: auto; color: var(--ink-3); transition: transform .2s; }
+    .strat:not([open]) summary::after { transform: rotate(-90deg); }
+    .strat .sb { padding: 0 16px 14px; font-size: 13.5px; color: var(--ink-2); }
+    .strat .sb p { margin: 0 0 8px; color: var(--ink); }
+    .strat ol { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+    .strat .bt { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: var(--inset); border: 1px solid var(--line); font-size: 12.5px; }
 
     /* ── Cadena de decisión (flujo de nodos) ─────────────────────────────── */
     .section-h { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin: 34px 0 14px; }
@@ -257,6 +274,76 @@
     .modal input { width: 100%; height: 40px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--inset); padding: 0 12px; outline: none; margin-bottom: 14px; }
     .modal input:focus { border-color: var(--accent); }
     .modal .row { display: flex; gap: 8px; justify-content: flex-end; }
+    /* ── Simulador de aportes ──────────────────────────────────────────── */
+    .sim { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 14px; }
+    @media (max-width: 1023px) { .sim { grid-template-columns: 1fr; } }
+    .sim-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+    .sim-form label { display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+    .sim-form label.span2 { grid-column: span 2; }
+    .sim-form input { width: 100%; height: 36px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--inset); padding: 0 10px; outline: none; font-variant-numeric: tabular-nums; }
+    .sim-form input:focus { border-color: var(--accent); }
+    .sim-form .sw { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+    .sim-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); padding: 0 16px 10px; }
+    .sim-legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+
+    /* ── Navegación entre vistas: Todos los bots | un bot ──────────────── */
+    .views { border-top: 1px solid var(--line); }
+    .views .wrap { display: flex; gap: 4px; height: 46px; align-items: center; overflow-x: auto; scrollbar-width: none; }
+    .views .wrap::-webkit-scrollbar { display: none; }
+    .views button { display: inline-flex; align-items: center; gap: 8px; border: 1px solid transparent; background: none; height: 32px; padding: 0 12px;
+                    border-radius: 9px; cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13.5px; white-space: nowrap; }
+    .views button:hover { color: var(--ink); background: var(--inset); }
+    .views button[aria-current="true"] { color: var(--ink); background: var(--card-strong); border-color: var(--line-strong); }
+    .views .sw { width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--accent)); flex: none; }
+    .views .sw.off { background: transparent; box-shadow: inset 0 0 0 2px var(--c, var(--ink-3)); }
+    .views .ret { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    /* ── Vista "Todos los bots" ──────────────────────────────────────────── */
+    .ov-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .ov-kpis .kpi .val { font-size: 21px; }
+    @media (max-width: 900px) { .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .cmp { margin-top: 14px; }
+    .cmp .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 16px 0; font-size: 12.5px; color: var(--ink-2); }
+    .cmp .legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .cmp .legend i { width: 14px; height: 3px; border-radius: 2px; background: var(--c); }
+    .cmp .legend b { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 650; }
+    .cmp .chart-box svg { min-height: 230px; }
+    .ov-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin-top: 14px; align-items: start; }
+    @media (max-width: 400px) { .ov-grid { grid-template-columns: minmax(0, 1fr); } }
+    .live { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+    .live::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--c); border-radius: 16px 16px 0 0; }
+    .live .lh { display: flex; align-items: flex-start; gap: 10px; padding: 15px 16px 12px; }
+    .live .lh h3 { margin: 0; font-size: 16px; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+    .live .lh .av { width: 38px; height: 38px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 750; font-size: 16px;
+                    color: #fff; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent); }
+    .live .lh .meta b { color: var(--ink-2); font-weight: 600; }
+    .live .lh .meta { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+    .live .lh .pills { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+    .live .pill.run::before { animation: pulse 2s infinite; }
+    .live .lb { padding: 0 16px 6px; display: flex; flex-direction: column; gap: 12px; }
+    .live .eq { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; align-items: end; }
+    .live .eq .lbl { font-size: 12px; color: var(--ink-2); }
+    .live .eq .big { font-size: 26px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; white-space: nowrap; }
+    .live .eq .foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12px; color: var(--ink-3); }
+    .live .eq svg { width: 100%; height: 46px; display: block; }
+    .live .box { background: var(--inset); border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
+    .live .box .kv { padding: 2.5px 0; font-size: 12.5px; }
+    .live .meter { margin: 3px 0 1px; }
+    .live .decs { display: flex; flex-wrap: wrap; gap: 6px; }
+    .live .dec { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 8px; border-radius: 8px; background: var(--inset); border: 1px solid var(--line); }
+    .live .dec b { font-weight: 650; }
+    .live .sh { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3); margin-bottom: 6px; }
+    .live ul.mini { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .live ul.mini li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 10px; font-size: 12.5px; padding: 8px 10px; border-radius: 10px; background: var(--inset); border: 1px solid var(--line); }
+    .live ul.mini li .s { color: var(--ink-3); font-size: 11.5px; }
+    .live ul.mini li .r { text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; }
+    .live .none { font-size: 12.5px; color: var(--ink-3); padding: 2px 0; }
+    .live footer { margin-top: auto; padding: 12px 16px 14px; display: flex; align-items: center; gap: 10px; }
+    .live footer .sum { font-size: 12px; color: var(--ink-3); flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    .add-bot { border-style: dashed; box-shadow: none; background: transparent; padding: 18px 18px 16px; font-size: 13px; color: var(--ink-2); }
+    .add-bot h3 { margin: 0 0 6px; font-size: 15px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+    .add-bot ol { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 5px; }
+    .add-bot code { background: var(--inset); border: 1px solid var(--line); padding: 1px 5px; border-radius: 5px; font-size: 12px; overflow-wrap: anywhere; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
   </style>
 </head>
@@ -293,27 +380,65 @@
     <span id="updated" class="faint hide-sm" style="font-size:12px"></span>
     <button id="btn-theme" class="btn icon" title="Cambiar tema claro / oscuro" aria-label="Cambiar tema"><svg class="i"><use href="#i-sun"/></svg></button>
     <button id="btn-refresh" class="btn icon" title="Refrescar" aria-label="Refrescar"><svg class="i"><use href="#i-refresh"/></svg></button>
-    <button id="btn-kill" class="btn danger"><svg class="i"><use href="#i-power"/></svg><span>Kill Switch</span></button>
+    <button id="btn-kill" class="btn danger hidden"><svg class="i"><use href="#i-power"/></svg><span>Kill Switch</span></button>
   </div>
+  <nav class="views" aria-label="Vistas"><div class="wrap" id="views"></div></nav>
 </header>
 
 <main class="wrap">
   <div id="error" class="err hidden"></div>
 
+
+  <!-- Todos los bots a la vez -->
+  <div id="overview">
+    <section>
+      <div class="hero-h">
+        <h1><span id="ov-dot" class="live-dot off"></span>Tus bots en vivo</h1>
+        <span id="ov-badge" class="pill s-mute">…</span>
+      </div>
+      <p class="hero-sub">Cada estrategia opera en paper con su propia cuenta simulada y sus propias reglas. Las tarjetas se mueven solas: precio, posiciones y decisiones de cada bot. <span id="ov-when" class="faint"></span></p>
+      <div class="ov-kpis">
+        <div class="card kpi"><div class="ico"><svg class="i"><use href="#i-plug"/></svg></div>
+          <div class="lbl">Bots funcionando</div><div id="o-run" class="val num">—</div><div class="foot" id="o-run-f"></div></div>
+        <div class="card kpi"><div class="ico"><svg class="i"><use href="#i-bolt"/></svg></div>
+          <div class="lbl">Posiciones abiertas</div><div id="o-pos" class="val num">—</div><div class="foot" id="o-pos-f"></div></div>
+        <div class="card kpi"><div class="ico"><svg class="i"><use href="#i-cal"/></svg></div>
+          <div class="lbl">Operaciones cerradas</div><div id="o-ops" class="val num">—</div><div class="foot" id="o-ops-f"></div></div>
+        <div class="card kpi"><div class="ico"><svg class="i"><use href="#i-trend"/></svg></div>
+          <div class="lbl">Va mejor</div><div id="o-best" class="val">—</div><div class="foot" id="o-best-f"></div></div>
+      </div>
+      <div class="card cmp">
+        <div class="card-h"><svg class="i"><use href="#i-trend"/></svg>Rendimiento comparado<span class="right faint" style="font-size:12px">% sobre el capital inicial de cada bot</span></div>
+        <div class="legend" id="cmp-legend"></div>
+        <div class="chart-box" id="cmp-box"><svg id="cmp-chart" role="img" aria-label="Rendimiento de cada bot en el tiempo"></svg><div id="cmp-tip" class="tip hidden"></div></div>
+      </div>
+    </section>
+    <div id="ov-grid" class="ov-grid" aria-label="Bots"></div>
+    <div id="chain-ov"></div>
+  </div>
+
+  <!-- Un bot en detalle -->
+  <div id="detail" class="hidden">
+
   <!-- En vivo + KPIs -->
   <section>
     <div class="hero-h">
-      <h1><span id="live-dot" class="live-dot off"></span>En vivo</h1>
+      <h1><span id="live-dot" class="live-dot off"></span><span id="bot-title">En vivo</span></h1>
       <span id="status-badge" class="pill s-mute">…</span>
       <span id="manual-badge" class="pill s-bad hidden">KILL SWITCH ACTIVO</span>
+      <span id="health-badge" class="pill hidden"></span>
     </div>
     <p class="hero-sub">Rendimiento en tiempo real del bot en modo paper. Última vela procesada: <span id="last-tick" class="num">—</span></p>
+    <details id="strat" class="card strat hidden" open>
+      <summary><svg class="i"><use href="#i-spark"/></svg><span id="strat-title">Cómo opera</span></summary>
+      <div class="sb"><p id="strat-sum"></p><ol id="strat-how"></ol><div id="strat-bt" class="bt"></div></div>
+    </details>
 
     <div class="kpis">
       <div class="card conn">
         <h3>Conexión</h3>
         <div class="conn-grid">
-          <div class="kv"><span>Datos</span><span>Binance Vision</span></div>
+          <div class="kv"><span>Datos</span><span>Binance</span></div>
           <div class="kv"><span>Modo</span><span>Paper (simulado)</span></div>
           <div class="kv"><span>Temporalidad</span><span id="c-tf">—</span></div>
           <div class="kv"><span>Pares</span><span id="c-syms">—</span></div>
@@ -339,14 +464,15 @@
     </div>
   </section>
 
-  <!-- Cadena de decisión -->
-  <section>
+  <!-- Cadena de decisión: en "Todos los bots" va debajo de las tarjetas (con selector de bot); en el detalle, aquí -->
+  <section id="chain">
     <div class="section-h">
       <div>
-        <h2>Cadena de decisión</h2>
+        <h2>Cadena de decisión<span id="chain-who" class="faint" style="font-weight:600"></span></h2>
         <p>Cada par pasa por las 3 capas en orden: Capa 1 protege la cuenta, Capa 2 lee el mercado y Capa 3 calcula el riesgo. <span id="scan-when" class="faint"></span></p>
       </div>
       <div class="tools">
+        <div id="chain-bot" class="seg hidden" role="group" aria-label="Bot"></div>
         <div id="sym-seg" class="seg" role="group" aria-label="Par"></div>
         <button id="btn-scan" class="btn primary sm"><svg class="i"><use href="#i-scan"/></svg>Escanear ahora</button>
       </div>
@@ -383,12 +509,15 @@
     </div>
   </section>
 
+  <div id="chain-home"></div>
+
   <!-- Pestañas -->
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="perf" aria-selected="true">Rendimiento</button>
     <button role="tab" data-tab="pos" aria-selected="false">Posiciones abiertas <span class="cnt" id="cnt-pos">0</span></button>
     <button role="tab" data-tab="hist" aria-selected="false">Historial <span class="cnt" id="cnt-hist">0</span></button>
     <button role="tab" data-tab="log" aria-selected="false">Registro de control</button>
+    <button role="tab" data-tab="sim" aria-selected="false">Plan de aportes</button>
   </nav>
 
   <div id="tab-perf" class="perf">
@@ -424,6 +553,35 @@
 
   <div id="tab-log" class="card hidden"><ul id="log-body" class="log"></ul></div>
 
+  <div id="tab-sim" class="sim hidden">
+    <div class="card">
+      <div class="card-h"><svg class="i"><use href="#i-wallet"/></svg>Tu plan</div>
+      <div class="card-b">
+        <form id="sim-form" class="sim-form" autocomplete="off">
+          <label>Capital inicial ($)<input id="sim-cap" type="number" min="0" step="10" inputmode="decimal"></label>
+          <label>Aporte mensual ($)<input id="sim-add" type="number" min="0" step="5" inputmode="decimal"></label>
+          <label>Meses<input id="sim-months" type="number" min="1" max="120" step="1" inputmode="numeric"></label>
+          <label>Meta ($)<input id="sim-goal" type="number" min="0" step="50" inputmode="decimal"></label>
+          <label><span><i class="sw" style="background:var(--bad)"></i>En contra (%/mes)</span><input id="sim-r0" type="number" step="0.1" inputmode="decimal"></label>
+          <label><span><i class="sw" style="background:var(--ink-3)"></i>Sin rendimiento (%/mes)</span><input id="sim-r1" type="number" step="0.1" inputmode="decimal"></label>
+          <label class="span2"><span><i class="sw" style="background:var(--accent)"></i>Estrategia que funciona (%/mes)</span><input id="sim-r2" type="number" step="0.1" inputmode="decimal"></label>
+        </form>
+        <p class="note">Cada mes se aplica el rendimiento al saldo y luego se suma el aporte. Un +1% mensual sostenido ya es muy difícil: hasta ahora el backtest de la estrategia oficial dio negativo, así que el escenario realista hoy es el gris.</p>
+      </div>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column">
+      <div class="card-h"><svg class="i"><use href="#i-trend"/></svg>Cómo crece tu dinero<span class="right faint" id="sim-head" style="font-size:12px"></span></div>
+      <div class="chart-box" id="sim-box"><svg id="sim-chart" role="img" aria-label="Proyección del saldo por escenario"></svg><div id="sim-tip" class="tip hidden"></div></div>
+      <div class="sim-legend" id="sim-legend"></div>
+      <table class="t">
+        <thead><tr><th>Escenario</th><th class="r">Saldo final</th><th class="r">Tú aportaste</th><th class="r">Ganado o perdido</th><th class="r">Llega a la meta</th></tr></thead>
+        <tbody id="sim-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  </div>
+
   <p class="foot-note">Se actualiza solo cada 15 s · Las acciones requieren la clave de acceso · Horas en tu zona local, periodos (hoy, semana, mes) en UTC</p>
 </main>
 
@@ -450,15 +608,19 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const STORE = 'ingresosbot.key', THEME = 'ingresosbot.theme', SYM = 'ingresosbot.symbol';
+  const STORE = 'ingresosbot.key', THEME = 'ingresosbot.theme', SYM = 'ingresosbot.symbol', BOT = 'ingresosbot.bot';
   const store = { get: (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } },
                   set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} } };
   let KEY = store.get(STORE) || '';
-  let state = null, scan = null, symbol = store.get(SYM) || '';
+  let state = null, scan = null, symbol = store.get(SYM) || '', bots = null, botId = store.get(BOT) || '';
+  let overview = null;
+  // Vista: 'all' (todos los bots) o el id de un bot. Va en la URL (#tortuga) para poder compartir el enlace.
+  let view = decodeURIComponent(location.hash.slice(1)) || store.get('ingresosbot.view') || 'all';
+  const withBot = (path) => botId ? path + (path.includes('?') ? '&' : '?') + 'bot=' + encodeURIComponent(botId) : path;
 
   // La clave puede venir una vez por ?key= (se guarda y se quita de la URL).
   const urlKey = new URLSearchParams(location.search).get('key');
-  if (urlKey) { KEY = urlKey; store.set(STORE, KEY); history.replaceState(null, '', location.pathname); }
+  if (urlKey) { KEY = urlKey; store.set(STORE, KEY); history.replaceState(null, '', location.pathname + location.hash); }
 
   // ── Tema ──
   function applyTheme(t) {
@@ -468,7 +630,7 @@
   applyTheme(store.get(THEME) || 'dark');
   $('btn-theme').addEventListener('click', () => {
     const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    store.set(THEME, t); applyTheme(t); if (state) { drawChart(); drawWires(); }
+    store.set(THEME, t); applyTheme(t); if (state) { drawChart(); drawWires(); } drawSim(); drawCompare();
   });
 
   // ── Formato ──
@@ -502,6 +664,14 @@
     'slope_ema20_lt_-0.20%': 'Pendiente EMA 20 menor a −0,2%', rsi_in_36_54: 'RSI entre 36 y 54',
     'extension_le_3.2ATR': 'Sin sobre-extensión (≤ 3,2 ATR)', short_enabled: 'Cortos permitidos',
   };
+  const checkLabel = (k) => {
+    if (CHECKS[k]) return CHECKS[k];
+    let m = /^breakout_close_gt_max(\d+)$/.exec(k);
+    if (m) return `Cierre supera el máximo de las ${m[1]} velas anteriores`;
+    m = /^daily_close_gt_sma(\d+)d$/.exec(k);
+    if (m) return `Cierre diario de ayer sobre su media de ${m[1]} días`;
+    return k;
+  };
   const RESULT = { WIN: ['Ganada', 's-good'], LOSS: ['Perdida', 's-bad'], BREAKEVEN: ['Break-even', 's-mute'] };
   const pill = (label, cls, plain) => `<span class="pill ${cls}${plain ? ' plain' : ''}">${esc(label)}</span>`;
 
@@ -522,14 +692,29 @@
   // ── Render principal ──
   function render(s) {
     state = s;
+    const bt = s.bot || {};
+    $('bot-title').textContent = bots && bots.length > 1 ? whoFull(bt) : 'En vivo';
+    $('chain-who').textContent = bots && bots.length > 1 ? ' · ' + who(bt) : '';
+    if (view !== 'all') document.title = (bots && bots.length > 1 ? who(bt) + ' · ' : '') + 'Ingresosbot · Panel';
+    $('strat').classList.toggle('hidden', !bt.summary);
+    $('strat-title').textContent = bt.trader ? 'Cómo opera ' + bt.trader + ' (' + bt.name + ')' : 'Cómo opera ' + (bt.name || 'el bot');
+    $('strat-sum').textContent = bt.summary || '';
+    $('strat-how').innerHTML = (bt.how || []).map((h) => `<li>${esc(h)}</li>`).join('');
+    $('strat-bt').innerHTML = bt.backtest ? '<b>Prueba con datos reales:</b> ' + esc(bt.backtest) : '';
+    $('strat-bt').classList.toggle('hidden', !bt.backtest);
     if (s.last_scan && (!scan || s.last_scan.scanned_at >= scan.scanned_at)) scan = s.last_scan;
     const a = s.account, m = s.metrics, x = s.exposure, c = s.config, per = s.periods || {};
     const st = STATUS[a.status] || [a.status, 's-mute'];
-    const b = $('status-badge'); b.className = 'pill ' + st[1]; b.textContent = 'Bot ' + st[0].toLowerCase(); b.title = a.status;
+    const b = $('status-badge'); b.className = 'pill ' + st[1]; b.textContent = 'Capa 1 · ' + st[0].toLowerCase(); b.title = a.status;
     $('manual-badge').classList.toggle('hidden', !a.manual_halt);
-    $('live-dot').className = 'live-dot' + (a.status === 'ACTIVE' || a.status === 'THROTTLED' ? '' : ' off');
+    // El estado de la Capa 1 no dice si el proceso corre: eso lo da el latido (vista de todos los bots).
+    const ov = (bots || []).find((x) => x.id === bt.id), health = ov && ov.runner ? ov.runner.health : null;
+    const hb = $('health-badge'), hl = HEALTH[health];
+    hb.classList.toggle('hidden', !hl || health === 'running');
+    if (hl) { hb.className = 'pill ' + hl[1] + (health === 'running' ? ' hidden' : ''); hb.textContent = 'Proceso: ' + hl[0].toLowerCase(); }
+    $('live-dot').className = 'live-dot' + ((a.status === 'ACTIVE' || a.status === 'THROTTLED') && (!health || health === 'running') ? '' : ' off');
     const kill = $('btn-kill');
-    kill.className = 'btn ' + (a.manual_halt ? 'resume' : 'danger');
+    kill.className = 'btn ' + (a.manual_halt ? 'resume' : 'danger') + (view === 'all' ? ' hidden' : '');
     kill.querySelector('span').textContent = a.manual_halt ? 'Reactivar' : 'Kill Switch';
 
     const r = s.runner || {};
@@ -652,6 +837,14 @@
       <circle cx="${last[0]}" cy="${last[1]}" r="3" fill="var(--accent)" vector-effect="non-scaling-stroke"/></svg>`;
   }
 
+  const num = (v) => String(v).replace('.', ',');
+  function formulaHtml(c) {
+    if (c && c.strategy === 'trend') {
+      return `SL inicial = entrada − ${num(c.trend_sl_atr_mult)} × ATR<br>Salida: trailing ${num(c.trail_atr_mult)} × ATR bajo el máximo (solo sube)<br>Sin take profit fijo ni Break-Even<br>Riesgo ${num(c.risk_base_pct)}% · tamaño ≤ ${fmt(c.max_allocation_pct, 0)}% del balance`;
+    }
+    return 'SL = entrada − 1,6 × ATR<br>TP = entrada + 3,6 × ATR<br>BE = entrada + 1,5 × ATR → SL a +0,2%<br>Tamaño ≤ 85% del balance';
+  }
+
   let wireState = { l1: 'on', l2: 'on', l3: 'off', exe: 'off' };
 
   function renderFlow() {
@@ -692,14 +885,28 @@
     const dec = decision ? (DECISION[decision] || [decision, '']) : ['Sin datos', ''];
     const rg = regime ? (REGIME[regime] || [regime, 's-mute']) : null;
     let checksHtml = '', indHtml = '', extra = '';
-    if (l2 && l2.long_checks) {
+    const trend = l2 && l2.strategy === 'trend' && l2.breakout_long_checks;
+    if (trend) {
+      const ent = Object.entries(l2.breakout_long_checks);
+      const ok = ent.filter(([, v]) => v).length;
+      checksHtml = `<div class="subhead"><span>Reglas de entrada LONG</span><span>${ok}/${ent.length}</span></div>
+        <ul class="checks">${ent.map(([k, v]) => `<li class="${v ? 'ok' : 'no'}"><span class="mk">${v ? '✓' : '✕'}</span><span>${esc(checkLabel(k))}</span></li>`).join('')}</ul>`;
+      const ind = l2.indicators || {};
+      if (!nil(ind.donchian_high)) {
+        const gap = ind.close ? (ind.donchian_high / ind.close - 1) * 100 : null;
+        indHtml = `<div class="ind-grid">
+            <div class="ind"><b>${px(ind.donchian_high)}</b><span>máximo a romper</span></div>
+            <div class="ind"><b class="${gap > 0 ? '' : 'good'}">${nil(gap) ? '—' : (gap > 0 ? '+' + fmt(gap, 1) + '%' : 'roto')}</b><span>falta para la ruptura</span></div>
+            <div class="ind"><b>${px(ind.atr14)}</b><span>ATR 14</span></div></div>`;
+      }
+    } else if (l2 && l2.long_checks) {
       const sideShort = decision === 'SHORT' || (decision !== 'LONG' && l2.short_checks && l2.short_checks.short_enabled &&
         Object.values(l2.short_checks).filter(Boolean).length > Object.values(l2.long_checks).filter(Boolean).length + 1);
       const checks = sideShort ? l2.short_checks : l2.long_checks;
       const ent = Object.entries(checks).filter(([k]) => k !== 'short_enabled');
       const ok = ent.filter(([, v]) => v).length;
       checksHtml = `<div class="subhead"><span>Reglas de entrada ${sideShort ? 'SHORT' : 'LONG'}</span><span>${ok}/${ent.length}</span></div>
-        <ul class="checks">${ent.map(([k, v]) => `<li class="${v ? 'ok' : 'no'}"><span class="mk">${v ? '✓' : '✕'}</span><span>${esc(CHECKS[k] || k)}</span></li>`).join('')}</ul>`;
+        <ul class="checks">${ent.map(([k, v]) => `<li class="${v ? 'ok' : 'no'}"><span class="mk">${v ? '✓' : '✕'}</span><span>${esc(checkLabel(k))}</span></li>`).join('')}</ul>`;
       const ind = l2.indicators || {};
       if (!nil(ind.rsi14)) {
         const rsiPos = Math.max(0, Math.min(100, ind.rsi14));
@@ -742,7 +949,7 @@
     } else {
       $('l3-pill').innerHTML = pill('En espera', 's-mute');
       $('l3-b').innerHTML = `<div class="muted" style="font-size:13px;margin-bottom:8px">${esc(l3 && l3.reason ? 'Sin cálculo: ' + l3.reason : 'Se calcula solo cuando Capa 2 da señal.')}</div>
-        <div class="formula">SL = entrada − 1,6 × ATR<br>TP = entrada + 3,6 × ATR<br>BE = entrada + 1,5 × ATR → SL a +0,2%<br>Tamaño ≤ 85% del balance</div>`;
+        <div class="formula">${formulaHtml(s.config)}</div>`;
     }
 
     // Ejecución
@@ -845,25 +1052,366 @@
     hit.addEventListener('mouseleave', leave); hit.addEventListener('touchend', leave);
   }
 
+  // ── Plan de aportes (todo en el navegador; no toca el bot) ──
+  const SIM = 'ingresosbot.sim';
+  const SIM_DEF = { cap: 500, add: 50, months: 24, goal: 2000, r0: -1, r1: 0, r2: 1 };
+  const SIM_SERIES = [['r0', 'Mercado en contra', 'var(--bad)'], ['r1', 'Sin rendimiento', 'var(--ink-3)'], ['r2', 'Estrategia que funciona', 'var(--accent)']];
+  let sim = (() => { try { return { ...SIM_DEF, ...JSON.parse(store.get(SIM) || '{}') }; } catch (_) { return { ...SIM_DEF }; } })();
+  let simTouched = !!store.get(SIM);
+
+  // Saldo mes a mes: primero el rendimiento sobre el saldo, luego el aporte del mes.
+  function projectBalance(cap, add, ratePct, months) {
+    const out = [cap];
+    for (let m = 1; m <= months; m++) out.push(Math.max(0, out[m - 1] * (1 + ratePct / 100) + add));
+    return out;
+  }
+
+  function fillSimForm() {
+    for (const k of Object.keys(SIM_DEF)) $('sim-' + k).value = sim[k];
+  }
+
+  $('sim-form').addEventListener('input', () => {
+    for (const k of Object.keys(SIM_DEF)) {
+      const v = parseFloat($('sim-' + k).value);
+      if (!Number.isNaN(v)) sim[k] = v;
+    }
+    sim.months = Math.max(1, Math.min(120, Math.round(sim.months)));
+    sim.cap = Math.max(0, sim.cap); sim.add = Math.max(0, sim.add); sim.goal = Math.max(0, sim.goal);
+    simTouched = true; store.set(SIM, JSON.stringify(sim)); drawSim();
+  });
+
+  function drawSim() {
+    const svg = $('sim-chart'), tip = $('sim-tip');
+    if ($('tab-sim').classList.contains('hidden')) return;
+    // Si nunca se tocó el plan, arranca con el balance inicial real del bot.
+    if (!simTouched && state && state.account && state.account.initial_balance) sim.cap = Math.round(state.account.initial_balance);
+    if (!$('sim-form').contains(document.activeElement)) fillSimForm();
+    const n = sim.months;
+    const series = SIM_SERIES.map(([k, label, color]) => ({ label, color, rate: sim[k], vals: projectBalance(sim.cap, sim.add, sim[k], n) }));
+    const paid = (m) => sim.cap + sim.add * m;
+    const W = svg.clientWidth || 600, H = Math.max(260, svg.clientHeight || 260), pl = 64, pr = 12, pt = 14, pb = 26;
+    const all = series.flatMap((x) => x.vals).concat(sim.goal ? [sim.goal] : []);
+    let lo = Math.min(0, ...all), hi = Math.max(...all, 1);
+    hi += (hi - lo) * .06;
+    const X = (i) => pl + i / n * (W - pl - pr);
+    const Y = (v) => pt + (1 - (v - lo) / (hi - lo)) * (H - pt - pb);
+    const ticks = [0, 1, 2, 3].map((k) => lo + (hi - lo) * k / 3);
+    const path = (vals) => vals.map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join(' ');
+    const fmtAxis = (v) => Number(v).toLocaleString('es-CO', { maximumFractionDigits: 0 });
+    const goalY = Y(sim.goal);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = `<g class="grid">${ticks.map((v) => `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}"/>`).join('')}</g>
+      <g class="axis">${ticks.map((v) => `<text x="${pl - 8}" y="${Y(v) + 4}" text-anchor="end">${fmtAxis(v)}</text>`).join('')}
+        <text x="${pl}" y="${H - 6}">Hoy</text><text x="${W - pr}" y="${H - 6}" text-anchor="end">Mes ${n}</text></g>
+      ${sim.goal ? `<line x1="${pl}" x2="${W - pr}" y1="${goalY}" y2="${goalY}" stroke="var(--warn)" stroke-dasharray="6 5" stroke-width="1.4"/>
+        <text x="${pl + 6}" y="${goalY - 6}" fill="var(--warn)" font-size="11">Meta ${fmtAxis(sim.goal)} $</text>` : ''}
+      ${series.map((x, i) => `<path d="${path(x.vals)}" fill="none" stroke="${x.color}" stroke-width="${i === 1 ? 2 : 2.2}" ${i === 1 ? 'stroke-dasharray="5 5"' : ''} stroke-linejoin="round"/>`).join('')}
+      <g id="sim-cross" style="display:none"><line id="sim-cx" y1="${pt}" y2="${H - pb}" stroke="var(--ink-3)" stroke-dasharray="3 4"/></g>
+      <rect x="${pl}" y="0" width="${W - pl - pr}" height="${H}" fill="transparent" id="sim-hit"/>`;
+    $('sim-legend').innerHTML = series.map((x) => `<span><i style="background:${x.color}"></i>${esc(x.label)} (${signed(x.rate, 1)}% mes)</span>`).join('');
+    $('sim-head').textContent = `${fmt(sim.add, 0)} $ al mes durante ${n} ${n === 1 ? 'mes' : 'meses'}`;
+
+    const goalMonth = (vals) => { const i = vals.findIndex((v) => v >= sim.goal); return i < 0 ? null : i; };
+    $('sim-body').innerHTML = series.slice().reverse().map((x) => {
+      const end = x.vals[n], diff = end - paid(n), gm = sim.goal ? goalMonth(x.vals) : null;
+      return `<tr><td data-l="Escenario"><span><span style="color:${x.color}">●</span> ${esc(x.label)} <span class="faint">${signed(x.rate, 1)}%/mes</span></span></td>
+        <td class="r" data-l="Saldo final"><b>${usd(end)}</b></td><td class="r" data-l="Tú aportaste">${usd(paid(n))}</td>
+        <td class="r ${tone(Math.round(diff * 100))}" data-l="Ganado o perdido">${signed(diff)} $</td>
+        <td class="r" data-l="Llega a la meta">${!sim.goal ? '—' : gm === null ? '<span class="faint">no en ' + n + ' meses</span>' : gm === 0 ? 'ya está' : 'mes ' + gm}</td></tr>`;
+    }).join('');
+
+    const hit = svg.querySelector('#sim-hit'), cross = svg.querySelector('#sim-cross');
+    const move = (ev) => {
+      const r = svg.getBoundingClientRect(), x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+      const i = Math.max(0, Math.min(n, Math.round((x - pl) / (W - pl - pr) * n)));
+      cross.style.display = ''; svg.querySelector('#sim-cx').setAttribute('x1', X(i)); svg.querySelector('#sim-cx').setAttribute('x2', X(i));
+      tip.innerHTML = `<div class="faint">${i ? 'Mes ' + i : 'Hoy'} · aportado ${usd(paid(i))}</div>` +
+        series.slice().reverse().map((s2) => `<div><span style="color:${s2.color}">●</span> <b class="num">${usd(s2.vals[i])}</b></div>`).join('');
+      tip.style.left = Math.max(80, Math.min(W - 70, X(i) + 14)) + 'px'; tip.style.top = (Y(series[2].vals[i]) - 6) + 'px';
+      tip.classList.remove('hidden');
+    };
+    const leave = () => { cross.style.display = 'none'; tip.classList.add('hidden'); };
+    hit.addEventListener('mousemove', move); hit.addEventListener('touchmove', move, { passive: true });
+    hit.addEventListener('mouseleave', leave); hit.addEventListener('touchend', leave);
+  }
+
   // ── Pestañas ──
   document.querySelector('.tabs').addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-tab]'); if (!b) return;
     document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
-    ['perf', 'pos', 'hist', 'log'].forEach((t) => $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
+    ['perf', 'pos', 'hist', 'log', 'sim'].forEach((t) => $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
     if (b.dataset.tab === 'perf') drawChart();
+    if (b.dataset.tab === 'sim') drawSim();
   });
 
-  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawWires(); drawChart(); }, 120); });
+  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawWires(); drawChart(); drawSim(); drawCompare(); }, 120); });
+
+  // ── Bots: color fijo por bot (orden de bots.json o "color" en su ficha) ──
+  const color = (b) => {
+    const i = bots ? bots.findIndex((x) => x.id === b.id) : 0;
+    const slot = Number.isInteger(b.color) && b.color >= 1 && b.color <= 8 ? b.color : (i % 8) + 1;
+    return `var(--series-${slot})`;
+  };
+  // Cada bot puede llevar nombre de persona ("trader" en bots.json): "Juan" opera la estrategia "Bot Oficial".
+  const who = (b) => (b && (b.trader || b.name)) || '';
+  const whoFull = (b) => b && b.trader ? b.trader + ' · ' + b.name : (b ? b.name : '');
+  const initial = (b) => esc(who(b).trim().charAt(0).toUpperCase() || '?');
+  const HEALTH = { running: ['Funcionando', 's-good run'], stopped: ['Apagado', 's-bad'], never: ['Sin encender', 's-mute'],
+                   stale: ['Sin señal', 's-warn'] };
+  const healthOf = (b) => b.error ? ['Error', 's-bad'] : (HEALTH[b.runner && b.runner.health] || ['—', 's-mute']);
+  const l1Of = (b) => !b.account ? null : b.account.manual_halt ? ['Kill switch', 's-bad'] : (STATUS[b.account.status] || [b.account.status, 's-mute']);
+  const short = (sym) => String(sym).replace(/USDT$/, '');
+  const dur = (sec) => {
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 60) return sec + ' s';
+    if (sec < 3600) return Math.round(sec / 60) + ' min';
+    if (sec < 86400) { const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h + ' h' + (m ? ' ' + m + ' min' : ''); }
+    const d = Math.floor(sec / 86400), h = Math.round((sec % 86400) / 3600); return d + (d === 1 ? ' día' : ' días') + (h ? ' ' + h + ' h' : '');
+  };
+  // Contadores que se mueven cada segundo sin pedir nada al servidor.
+  const since = (iso) => iso ? `<span data-since="${esc(iso)}">hace ${dur((Date.now() - new Date(iso)) / 1000)}</span>` : '—';
+  const until = (iso) => iso ? `<span data-until="${esc(iso)}">en ${dur((new Date(iso) - Date.now()) / 1000)}</span>` : '—';
+  setInterval(() => {
+    document.querySelectorAll('[data-since]').forEach((el) => { el.textContent = 'hace ' + dur((Date.now() - new Date(el.dataset.since)) / 1000); });
+    document.querySelectorAll('[data-until]').forEach((el) => {
+      const left = (new Date(el.dataset.until) - Date.now()) / 1000;
+      el.textContent = left > 0 ? 'en ' + dur(left) : 'procesando…';
+    });
+  }, 1000);
+
+  function renderViews() {
+    const list = bots || [];
+    $('chain-bot').innerHTML = list.map((b) => `<button type="button" data-bot="${esc(b.id)}" aria-pressed="${b.id === botId}" title="${esc(whoFull(b))}">${esc(who(b))}</button>`).join('');
+    $('views').innerHTML = `<button type="button" data-view="all" aria-current="${view === 'all'}">Todos los bots</button>` +
+      list.map((b) => {
+        const h = b.runner && b.runner.health;
+        return `<button type="button" data-view="${esc(b.id)}" aria-current="${view === b.id}" style="--c:${color(b)}" title="${esc(whoFull(b))}">
+          <span class="sw${h === 'running' ? '' : ' off'}"></span>${esc(who(b))}
+          <span class="ret ${tone(b.return_pct)}">${nil(b.return_pct) ? '' : signed(b.return_pct, 1) + '%'}</span></button>`;
+      }).join('');
+  }
+  $('views').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-view]'); if (!b) return;
+    setView(b.dataset.view);
+  });
+  function setView(v) {
+    if (v === view) return;
+    view = v; store.set('ingresosbot.view', v);
+    history.replaceState(null, '', v === 'all' ? location.pathname : '#' + encodeURIComponent(v));
+    if (v !== 'all') { botId = v; store.set(BOT, v); scan = null; state = null; }
+    applyView(); renderViews(); window.scrollTo({ top: 0 }); refresh();
+  }
+  function applyView() {
+    const all = view === 'all';
+    const chain = $('chain'), home = all ? $('chain-ov') : $('chain-home');
+    if (chain.parentNode !== home) { home.appendChild(chain); requestAnimationFrame(drawWires); }
+    $('chain-bot').classList.toggle('hidden', !all || !bots || bots.length < 2);
+    $('overview').classList.toggle('hidden', !all);
+    $('detail').classList.toggle('hidden', all);
+    $('btn-kill').classList.toggle('hidden', all);
+    if (all) document.title = 'Todos los bots · Ingresosbot';
+  }
+  $('chain-bot').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-bot]'); if (!b || b.dataset.bot === botId) return;
+    botId = b.dataset.bot; store.set(BOT, botId); scan = null; renderViews(); refresh();
+  });
+  window.addEventListener('hashchange', () => setView(decodeURIComponent(location.hash.slice(1)) || 'all'));
+
+  // ── Vista "Todos los bots" ──
+  function renderOverview() {
+    const list = (overview && overview.bots) || [];
+    const ok = list.filter((b) => !b.error);
+    const running = ok.filter((b) => b.runner.health === 'running');
+    const all = list.length && running.length === list.length;
+    $('ov-dot').className = 'live-dot' + (running.length ? '' : ' off');
+    $('ov-badge').className = 'pill ' + (all ? 's-good' : running.length ? 's-warn' : 's-bad');
+    $('ov-badge').textContent = all ? 'Todos funcionando' : running.length + ' de ' + list.length + ' funcionando';
+    $('ov-when').textContent = '';
+    $('updated').textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-CO');
+
+    // KPIs de conjunto (sin sumar capitales distintos: cada bot tiene su propio inicial).
+    $('o-run').textContent = running.length + ' de ' + list.length;
+    const off = list.filter((b) => !running.includes(b));
+    $('o-run-f').innerHTML = off.length ? esc(off.map((b) => who(b) + ': ' + healthOf(b)[0].toLowerCase()).join(' · ')) : 'todos con latido reciente';
+    const npos = ok.reduce((n, b) => n + b.open_positions.length, 0);
+    const unreal = ok.reduce((n, b) => n + (b.unrealized_pnl_usd || 0), 0);
+    $('o-pos').textContent = npos;
+    $('o-pos-f').innerHTML = npos ? `<span class="${tone(unreal)}">${signed(unreal)} $</span> sin cerrar` : 'esperando señales de entrada';
+    const nops = ok.reduce((n, b) => n + (b.metrics.trades || 0), 0), today = ok.reduce((n, b) => n + (b.today ? b.today.trades : 0), 0);
+    $('o-ops').textContent = nops;
+    $('o-ops-f').textContent = 'hoy ' + today + ' · entre todos los bots';
+    const best = ok.filter((b) => !nil(b.return_pct)).sort((a, b) => b.return_pct - a.return_pct)[0];
+    $('o-best').innerHTML = best ? esc(who(best)) : '—';
+    $('o-best-f').innerHTML = best ? chip(best.return_pct) + '<span>valor de la cuenta vs. su inicial</span>' : '';
+
+    $('ov-grid').innerHTML = list.map(liveCard).join('') + addBotCard();
+    drawCompare();
+  }
+
+  function liveCard(b) {
+    const c = color(b), h = healthOf(b);
+    const syms = (b.symbols || []).map(short).join(' · ');
+    const head = `<header class="lh"><span class="av">${initial(b)}</span><div style="min-width:0"><h3>${esc(who(b))}</h3>
+        <div class="meta">${b.trader ? '<b>' + esc(b.name) + '</b> · ' : ''}${esc(b.interval || '')}${syms ? ' · ' + esc(syms) : ''}</div></div>
+        <div class="pills">${pill(h[0], h[1])}${b.account ? pill('Capa 1 · ' + l1Of(b)[0], l1Of(b)[1], true) : ''}</div></header>`;
+    const foot = `<footer><span class="sum">${esc(b.summary || '')}</span>
+        <button type="button" class="btn sm" data-view="${esc(b.id)}">Ver detalle</button></footer>`;
+    if (b.error) return `<article class="card live" style="--c:${c}">${head}<div class="lb"><div class="note bad">${esc(b.error)}</div></div>${foot}</article>`;
+
+    const a = b.account, r = b.runner, lim = b.limits || {};
+    const curve = [a.initial_balance, ...(b.balance_curve || []).map((p) => p.balance), b.equity];
+    const ddMax = lim.halt_dd_pct || 3, ddPct = Math.min(100, a.daily_drawdown_pct / ddMax * 100);
+    const nL = lim.halt_losses || 3;
+    const decs = Object.entries(r.decisions || {});
+    const decHtml = decs.length ? `<div class="decs">${decs.map(([sym, d]) => {
+        const lab = DECISION[d.decision] || [d.decision === 'SKIPPED' ? 'Omitida' : (d.decision || '—'), ''];
+        const why = d.error || d.reason || (d.blocking || []).join(' · ');
+        return `<span class="dec" title="${esc(why)}">${esc(short(sym))} <b class="${lab[1]}">${esc(lab[0])}</b></span>`;
+      }).join('')}</div>` : `<div class="none">Aún no ha cerrado ninguna vela${r.health === 'never' ? ': el servicio no se ha encendido' : ''}.</div>`;
+
+    const pos = b.open_positions;
+    const posHtml = pos.length ? `<ul class="mini">${pos.map((p) => {
+        const prot = p.is_at_breakeven ? 'en Break-Even' : p.trail_atr_mult && p.stop_loss !== p.initial_stop_loss ? 'trailing activo' : 'SL inicial';
+        return `<li><span><b>${esc(short(p.symbol))}</b> <span class="${p.side === 'LONG' ? 'good' : 'bad'}">${esc(p.side)}</span>
+            <span class="faint">· ${px(p.entry_price)} → ${px(p.current_price)}</span></span>
+          <span class="r ${tone(p.unrealized_pnl_usd)}">${signed(p.unrealized_pnl_usd)} $</span>
+          <span class="s">SL ${px(p.stop_loss)} · ${prot} · abierta ${since(p.opened_at)}</span>
+          <span class="s r ${tone(p.unrealized_pct)}">${nil(p.unrealized_pct) ? '' : signed(p.unrealized_pct) + '%'}</span></li>`;
+      }).join('')}</ul>` : '<div class="none">Sin posiciones: esperando que las 3 capas den luz verde.</div>';
+
+    const tr = b.recent_trades.slice(0, 3);
+    const trHtml = tr.length ? `<ul class="mini">${tr.map((t) => {
+        const res = RESULT[t.result] || [t.result, 's-mute'];
+        return `<li><span><b>${esc(short(t.symbol))}</b> ${pill(res[0], res[1], true)}</span>
+          <span class="r ${tone(t.pnl_usd)}">${signed(t.pnl_usd)} $</span>
+          <span class="s">${esc(localTime(t.closed_at))} · ${esc(t.exit_reason)}</span>
+          <span class="s r">${t.r_multiple === null ? '' : signed(t.r_multiple) + ' R'}</span></li>`;
+      }).join('')}</ul>` : '<div class="none">Todavía no ha cerrado operaciones.</div>';
+
+    return `<article class="card live" style="--c:${c}">${head}<div class="lb">
+      <div class="eq"><div><div class="lbl">Valor de la cuenta</div><div class="big num">${usd(b.equity)}</div></div>
+        <div>${curve.length > 2 ? sparkColor(curve, c) : ''}</div>
+        <div class="foot">${chip(b.return_pct)}<span>inicial ${esc(usd(a.initial_balance))}</span>
+          ${b.unrealized_pnl_usd ? `<span>· ${signed(b.unrealized_pnl_usd)} $ sin cerrar</span>` : ''}
+          <span>· ${b.metrics.trades || 0} ${b.metrics.trades === 1 ? 'op' : 'ops'}${nil(b.metrics.win_rate_pct) ? '' : ' · gana ' + fmt(b.metrics.win_rate_pct, 0) + '%'}</span></div></div>
+      <div class="box">
+        <div class="kv"><span>Pérdidas seguidas</span><span>${a.consecutive_losses} / ${nL} <span class="dots">${Array.from({ length: nL }, (_, i) => `<i class="${i < a.consecutive_losses ? 'on' : ''}"></i>`).join('')}</span></span></div>
+        <div class="kv"><span>Drawdown de hoy</span><span>${fmt(a.daily_drawdown_pct)}% / ${fmt(ddMax, 0)}%</span></div>
+        <div class="meter"><div style="width:${ddPct}%;background:${ddPct >= 100 ? 'var(--bad)' : ddPct >= 66 ? 'var(--warn)' : 'var(--good)'}"></div></div>
+        ${a.cooldown_bars_remaining > 0 ? `<div class="kv"><span>Enfriamiento</span><span class="warn">${a.cooldown_bars_remaining} velas</span></div>` : ''}
+      </div>
+      <div class="box">
+        <div class="kv"><span>Última vela</span><span>${r.last_cycle_at ? since(r.last_cycle_at) : 'ninguna'}</span></div>
+        <div class="kv"><span>Próxima vela (${esc(b.interval)})</span><span>${until(r.next_bar_close)}</span></div>
+        <div class="kv"><span>Latido del proceso</span><span class="${r.health === 'running' ? '' : 'warn'}">${r.heartbeat_at ? since(r.heartbeat_at) : (r.service_state ? 'systemd: ' + esc(r.service_state) : '—')}</span></div>
+      </div>
+      <div><div class="sh"><span>Qué decidió en la última vela</span></div>${decHtml}</div>
+      <div><div class="sh"><span>Posiciones abiertas (${pos.length})</span></div>${posHtml}</div>
+      <div><div class="sh"><span>Últimas operaciones</span><span>${b.today && b.today.trades ? 'hoy ' + signed(b.today.pnl_usd) + ' $' : ''}</span></div>${trHtml}</div>
+      </div>${foot}</article>`;
+  }
+
+  function addBotCard() {
+    return `<div class="card add-bot"><h3><svg class="i"><use href="#i-plug"/></svg>¿Una estrategia más?</h3>
+      Cada bot nuevo aparece aquí solo, sin reiniciar el panel:
+      <ol><li>Añade su ficha (nombre, base, pares, temporalidad y parámetros) en <code>deploy/bots.json</code>.</li>
+      <li>Enciéndelo en el VPS: <code>systemctl enable --now ingresosbot-bot@ID</code>, cambiando ID por el de su ficha.</li></ol>
+      <div class="note">Pasos completos en docs/PANEL_BOTS.md.</div></div>`;
+  }
+
+  $('ov-grid').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-view]'); if (b) setView(b.dataset.view);
+  });
+
+  function sparkColor(vals, c) {
+    const w = 200, h = 46, min = Math.min(...vals), max = Math.max(...vals), rng = max - min || 1;
+    const pts = vals.map((v, i) => [i / (vals.length - 1) * w, 5 + (1 - (v - min) / rng) * (h - 10)]);
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+    const base = 5 + (1 - (vals[0] - min) / rng) * (h - 10);
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="0" x2="${w}" y1="${base}" y2="${base}" stroke="var(--line-strong)" stroke-dasharray="3 4" vector-effect="non-scaling-stroke"/>
+      <path d="${d}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+  }
+
+  // ── Rendimiento comparado: % de cada bot sobre su propio capital inicial, en el tiempo ──
+  function drawCompare() {
+    const svg = $('cmp-chart'), box = $('cmp-box'), tip = $('cmp-tip');
+    if (!overview || $('overview').classList.contains('hidden')) return;
+    const now = Date.now();
+    const series = overview.bots.filter((b) => !b.error && b.account && b.account.initial_balance).map((b) => {
+      const init = b.account.initial_balance, pct = (v) => (v / init - 1) * 100;
+      const pts = [];
+      const start = b.started_at || (b.balance_curve[0] && b.balance_curve[0].t);
+      if (start) pts.push({ t: new Date(start).getTime(), v: 0 });
+      for (const p of b.balance_curve) pts.push({ t: new Date(p.t).getTime(), v: pct(p.balance) });
+      pts.push({ t: now, v: b.return_pct || 0, live: true });
+      return { b, c: color(b), pts };
+    });
+    $('cmp-legend').innerHTML = series.map((x) => `<span style="--c:${x.c}" title="${esc(whoFull(x.b))}"><i></i>${esc(who(x.b))} <b class="${tone(x.b.return_pct)}">${signed(x.b.return_pct)}%</b></span>`).join('');
+    const t0 = Math.min(now - 86400000, ...series.map((x) => x.pts[0].t));
+    const W = svg.clientWidth || 600, H = Math.max(230, svg.clientHeight || 230), narrow = W < 520;
+    const pl = 50, pr = narrow ? 14 : 104, pt = 14, pb = 26;
+    const vals = series.flatMap((x) => x.pts.map((p) => p.v)).concat([0]);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const pad = Math.max(0.5, (hi - lo) * .15); lo -= pad; hi += pad;
+    const X = (t) => pl + (t - t0) / (now - t0) * (W - pl - pr);
+    const Y = (v) => pt + (1 - (v - lo) / (hi - lo)) * (H - pt - pb);
+    const ticks = [0, 1, 2, 3].map((k) => lo + (hi - lo) * k / 3);
+    // Escalones: el balance solo cambia al cerrar una operación; el último tramo incluye lo que va sin cerrar.
+    const path = (pts) => pts.map((p, i) => i ? `H${X(p.t).toFixed(1)} V${Y(p.v).toFixed(1)}` : `M${X(p.t).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(' ');
+    const dfmt = (t) => new Date(t).toLocaleDateString('es-CO', { day: 'numeric', month: 'short' });
+    // Etiquetas al final de cada línea, separadas para que no se pisen.
+    const labels = narrow ? [] : series.map((x) => ({ x, y: Y(x.pts[x.pts.length - 1].v) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 15);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = `<g class="grid">${ticks.map((v) => `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}"/>`).join('')}</g>
+      <g class="axis">${ticks.map((v) => `<text x="${pl - 8}" y="${Y(v) + 4}" text-anchor="end">${signed(v, Math.abs(hi - lo) < 4 ? 1 : 0)}%</text>`).join('')}
+        <text x="${pl}" y="${H - 6}">${dfmt(t0)}</text><text x="${W - pr}" y="${H - 6}" text-anchor="end">ahora</text></g>
+      <line class="base" x1="${pl}" x2="${W - pr}" y1="${Y(0)}" y2="${Y(0)}"/>
+      ${series.map((x) => `<path d="${path(x.pts)}" fill="none" stroke="${x.c}" stroke-width="2" stroke-linejoin="round"/>
+        <circle cx="${X(now)}" cy="${Y(x.pts[x.pts.length - 1].v)}" r="4" fill="${x.c}" stroke="var(--card-solid)" stroke-width="2"/>`).join('')}
+      ${labels.map((l) => `<text x="${X(now) + 9}" y="${l.y + 4}" font-size="11.5" fill="var(--ink-2)">${esc(who(l.x.b).length > 13 ? who(l.x.b).slice(0, 12) + '…' : who(l.x.b))}</text>`).join('')}
+      <g id="cmp-cross" style="display:none"><line id="cmp-cx" y1="${pt}" y2="${H - pb}" stroke="var(--ink-3)" stroke-dasharray="3 4"/></g>
+      <rect x="${pl}" y="0" width="${W - pl - pr}" height="${H}" fill="transparent" id="cmp-hit"/>`;
+    const valAt = (pts, t) => { if (t < pts[0].t) return null; let v = pts[0].v; for (const p of pts) { if (p.t <= t) v = p.v; else break; } return v; };
+    const hit = svg.querySelector('#cmp-hit'), cross = svg.querySelector('#cmp-cross');
+    const move = (ev) => {
+      const rc = svg.getBoundingClientRect(), x = Math.max(pl, Math.min(W - pr, (ev.touches ? ev.touches[0].clientX : ev.clientX) - rc.left));
+      const t = t0 + (x - pl) / (W - pl - pr) * (now - t0);
+      cross.style.display = ''; svg.querySelector('#cmp-cx').setAttribute('x1', x); svg.querySelector('#cmp-cx').setAttribute('x2', x);
+      tip.innerHTML = `<div class="faint">${esc(localTime(new Date(t).toISOString()))}</div>` + series.map((s2) => {
+        const v = valAt(s2.pts, t);
+        return `<div><span style="color:${s2.c}">●</span> ${esc(who(s2.b))} <b class="num">${v === null ? 'aún no operaba' : signed(v) + '%'}</b></div>`;
+      }).join('');
+      tip.style.left = Math.max(90, Math.min(W - 90, x)) + 'px'; tip.style.top = pt + 40 + 'px';
+      tip.classList.remove('hidden');
+    };
+    const leave = () => { cross.style.display = 'none'; tip.classList.add('hidden'); };
+    hit.addEventListener('mousemove', move); hit.addEventListener('touchmove', move, { passive: true });
+    hit.addEventListener('mouseleave', leave); hit.addEventListener('touchend', leave);
+  }
+
+  if (window.matchMedia('(max-width: 640px)').matches) $('strat').open = false;   // en el móvil, plegada
 
   // ── Acciones ──
   async function refresh() {
-    try { render(await api('/api/state')); showError(''); } catch (e) { showError(e.message); }
+    try {
+      overview = await api('/api/overview');
+      bots = overview.bots || [];
+      if (view !== 'all' && !bots.some((b) => b.id === view)) { view = 'all'; history.replaceState(null, '', location.pathname); }
+      if (view !== 'all') botId = view;
+      if (!bots.some((b) => b.id === botId)) botId = overview.default || (bots[0] && bots[0].id) || '';
+      applyView(); renderViews();
+      if (view === 'all') renderOverview();
+      render(await api(withBot('/api/state')));   // la cadena de decisión (y el detalle) del bot elegido
+      showError('');
+    } catch (e) { showError(e.message); }
   }
   $('btn-refresh').addEventListener('click', refresh);
 
   $('btn-scan').addEventListener('click', async () => {
     const btn = $('btn-scan'); btn.disabled = true; btn.lastChild.textContent = 'Escaneando…';
-    try { scan = await api('/api/scan-now', { method: 'POST', body: '{}' }); renderFlow(); showError(''); }
+    try { scan = await api(withBot('/api/scan-now'), { method: 'POST', body: '{}' }); renderFlow(); showError(''); }
     catch (e) { showError(e.message); }
     finally { btn.disabled = false; btn.lastChild.textContent = 'Escanear ahora'; }
   });
@@ -871,7 +1419,8 @@
   let halting = true;
   $('btn-kill').addEventListener('click', () => {
     halting = !(state && state.account.manual_halt);
-    $('kill-title').textContent = halting ? '¿Activar el Kill Switch?' : '¿Desactivar el Kill Switch?';
+    const whom = state && state.bot && bots && bots.length > 1 ? ' de ' + who(state.bot) : '';
+    $('kill-title').textContent = (halting ? '¿Activar el Kill Switch' : '¿Desactivar el Kill Switch') + whom + '?';
     $('kill-text').textContent = halting
       ? 'El bot no abrirá posiciones nuevas. Las que ya están abiertas conservan su stop loss y take profit.'
       : 'El estado volverá a lo que digan las reglas del Circuit Breaker (Capa 1).';
@@ -884,7 +1433,7 @@
   $('kill-form').addEventListener('submit', async (ev) => {
     ev.preventDefault(); closeModal('kill-modal');
     try {
-      const r = await api('/api/kill-switch', { method: 'POST', body: JSON.stringify({ action: halting ? 'halt' : 'resume', reason: halting ? $('kill-reason').value : '' }) });
+      const r = await api(withBot('/api/kill-switch'), { method: 'POST', body: JSON.stringify({ action: halting ? 'halt' : 'resume', reason: halting ? $('kill-reason').value : '' }) });
       showError(!halting && r.status_after !== 'ACTIVE' ? 'Kill switch desactivado, pero el Circuit Breaker mantiene la cuenta en ' + r.status_after + '.' : '');
       refresh();
     } catch (e) { showError(e.message); }

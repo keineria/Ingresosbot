@@ -13,6 +13,10 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 
 **Perfil paralelo Trend Rider** ([SKILL_4](skills/SKILL_4_trend_rider.md), `--params '{"strategy": "trend"}'`): misma Capa 1; entra por ruptura del máximo de 20 velas sobre la EMA200 y sale con trailing stop a 4 ATR, sin TP fijo ni Break-Even. Las reglas oficiales siguen siendo el valor por defecto. Investigación, validación y cómo correrlo al lado del oficial: [docs/TREND_RIDER.md](docs/TREND_RIDER.md). Resultados con datos de 2024-2026 y 500 USD: [docs/LAB_2024_2026.md](docs/LAB_2024_2026.md).
 
+**Varios bots con nombre propio** (`deploy/bots.json`): el panel muestra cada bot con su cuenta simulada y la ficha "Cómo opera". El tercero es **Tortuga 55**: ruptura del máximo de 55 días en velas diarias, sobre BTC, ETH, SOL, BNB, XRP y oro tokenizado (PAXG), con SL 3 ATR y trailing 5 ATR (`python bot_runner.py --bot tortuga`). Estrategias y activos alternativos probados (rotación, medias móviles, ETFs, oro, grid), cómo encender Tortuga 55 y el informe diario a GitHub (`daily_report.py`): [docs/ALTERNATIVAS.md](docs/ALTERNATIVAS.md). Laboratorio para repetirlo: `alt_lab.py`.
+
+**Panel con todos los bots en vivo**: `bot.commonbird.com` abre en *Todos los bots*, una tarjeta en vivo por estrategia (si el proceso está vivo, Capa 1, valor de la cuenta, posiciones con su precio actual, últimas operaciones, decisión de la última vela) y la curva comparada en %. Para añadir un cuarto bot basta con su ficha en `deploy/bots.json` y `systemctl enable --now ingresosbot-bot@ID`: [docs/PANEL_BOTS.md](docs/PANEL_BOTS.md).
+
 ## Módulos
 
 | Archivo | Qué hace |
@@ -24,7 +28,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `strategy_lab.py` | Walk-forward: elige parámetros con el pasado, los mide en meses que no vio y guarda cada orden simulada en SQLite |
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
 | `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
-| `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |
+| `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, pestaña «Plan de aportes» para proyectar capital + aporte mensual, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |
+| `arbitrage_scanner.py` | Medición de arbitraje SIN operar (solo APIs públicas): spreads entre 9 exchanges, triangular en Binance y funding de perpetuos; informe neto de comisiones para ~500 USD |
 
 ```bash
 pip install pandas numpy
@@ -70,6 +75,11 @@ cp .env.example .env            # rellena WEBHOOK_URL y/o TELEGRAM_BOT_TOKEN + T
 python notifier.py --test       # comprueba que llegan las alertas
 python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --once
 python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 4h --log-file logs/bot.log
+
+# Arbitraje: medir antes de operar (no envía órdenes ni usa claves)
+python arbitrage_scanner.py --once                       # qué exchanges responden desde este servidor
+python arbitrage_scanner.py --hours 6                    # graba en data/arbitrage/ y deja data/arbitrage/informe.md
+python arbitrage_scanner.py --report                     # rehace el informe con lo ya grabado
 
 # Pruebas
 python -m unittest discover -s tests -v
