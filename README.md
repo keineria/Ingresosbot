@@ -22,6 +22,7 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
 | `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
 | `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |
+| `arbitrage_scanner.py` | Medición de arbitraje SIN operar (solo APIs públicas): spreads entre 9 exchanges, triangular en Binance y funding de perpetuos; informe neto de comisiones para ~500 USD |
 
 ```bash
 pip install pandas numpy
@@ -63,6 +64,11 @@ cp .env.example .env            # rellena WEBHOOK_URL y/o TELEGRAM_BOT_TOKEN + T
 python notifier.py --test       # comprueba que llegan las alertas
 python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --once
 python bot_runner.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 4h --log-file logs/bot.log
+
+# Arbitraje: medir antes de operar (no envía órdenes ni usa claves)
+python arbitrage_scanner.py --once                       # qué exchanges responden desde este servidor
+python arbitrage_scanner.py --hours 6                    # graba en data/arbitrage/ y deja data/arbitrage/informe.md
+python arbitrage_scanner.py --report                     # rehace el informe con lo ya grabado
 
 # Pruebas
 python -m unittest discover -s tests -v

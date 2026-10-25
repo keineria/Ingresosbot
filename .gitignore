@@ -5,3 +5,4 @@ data/*.db-journal
 .env
 logs/
 .venv/
+data/arbitrage/
