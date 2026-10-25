@@ -1,0 +1,7 @@
+# Caddy: HTTPS automático (Let's Encrypt) + proxy inverso al panel en 127.0.0.1:8050.
+# Para un VPS Ubuntu/Debian SIN CyberPanel (ver deploy/MIGRAR_VPS.md). Se copia a /etc/caddy/Caddyfile.
+# Caddy pide y renueva el certificado solo; necesita los puertos 80 y 443 abiertos y el DNS apuntando al VPS.
+bot.commonbird.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8050
+}

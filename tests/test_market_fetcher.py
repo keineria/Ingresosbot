@@ -1,7 +1,9 @@
 """Pruebas de market_fetcher.py sin red: se inyecta un `get` falso con respuestas reales de formato."""
+import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.parse
 from pathlib import Path
@@ -144,6 +146,21 @@ class TestFetcher(unittest.TestCase):
         self.assertEqual(info["source"], "bybit")
         self.assertTrue(df.time.is_monotonic_increasing)
         self.assertAlmostEqual(df.close.iloc[-1], 1.5)
+
+    def test_market_sources_env_puts_api_binance_first(self):
+        fake = FakeBinance(300)
+        with unittest.mock.patch.dict(os.environ, {"MARKET_SOURCES": "binance, binance_vision,bybit"}):
+            self.assertEqual(mf.configured_sources(), ("binance", "binance_vision", "bybit"))
+            df, info = mf.fetch_candles("SOLUSDT", "1h", 100, get=fake, now_ms=START + 10**12)
+            self.assertEqual(info["source"], "binance")
+            self.assertTrue(all("api.binance.com" in u for u in fake.calls))
+            price = lambda url: {"price": "1.0"} if "api.binance.com" in url else 1 / 0  # noqa: E731
+            self.assertEqual(mf.fetch_price("BTCUSDT", get=price), (1.0, "binance"))
+        with unittest.mock.patch.dict(os.environ, {"MARKET_SOURCES": ""}):
+            self.assertEqual(mf.configured_sources(), mf.DEFAULT_SOURCES)
+        with unittest.mock.patch.dict(os.environ, {"MARKET_SOURCES": "binance,kraken"}):
+            with self.assertRaises(ValueError):
+                mf.configured_sources()
 
     def test_csv_fallback_and_error(self):
         with tempfile.TemporaryDirectory() as d:

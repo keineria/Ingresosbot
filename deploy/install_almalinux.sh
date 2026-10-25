@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instalador para AlmaLinux 9 (también Rocky/RHEL 9). Ejecutar como root desde la carpeta del repo:
+# Instalador para AlmaLinux 9 (también Rocky/RHEL 9) y Ubuntu 22.04+/Debian 12. Ejecutar como root desde la carpeta del repo:
 #   sudo bash deploy/install_almalinux.sh
 # Variables opcionales: APP_USER (por defecto ingresosbot), PYTHON_BIN (por defecto python3.11 o python3).
 # Es idempotente: se puede volver a ejecutar tras un `git pull` para actualizar dependencias y servicios.
@@ -17,7 +17,10 @@ die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 say "1/6 Python (se prefiere 3.11; mínimo 3.9)"
 if [[ -z "${PYTHON_BIN:-}" ]]; then
-  if ! command -v python3.11 >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    # Ubuntu/Debian: el python3 del sistema (3.10+) vale; python3-venv no viene instalado de serie.
+    apt-get update -qq && apt-get install -y -qq python3 python3-venv python3-pip curl >/dev/null
+  elif ! command -v python3.11 >/dev/null 2>&1; then
     dnf install -y python3.11 python3.11-pip >/dev/null 2>&1 || echo "python3.11 no disponible; se usará python3"
   fi
   PYTHON_BIN="$(command -v python3.11 || command -v python3)"
@@ -28,7 +31,7 @@ echo "Usando $("$PYTHON_BIN" --version) en $PYTHON_BIN"
 
 say "2/6 Usuario de servicio '$APP_USER'"
 if ! id "$APP_USER" >/dev/null 2>&1; then
-  useradd --system --home-dir "$APP_DIR" --shell /sbin/nologin "$APP_USER"
+  useradd --system --home-dir "$APP_DIR" --shell "$(command -v nologin || echo /sbin/nologin)" "$APP_USER"
 fi
 
 say "3/6 Entorno virtual e instalación de pandas + numpy"
@@ -89,5 +92,6 @@ cat <<MSG
 
 Siguiente paso: completa WEBHOOK_URL / TELEGRAM_* en $APP_DIR/.env, reinicia con
   sudo systemctl restart ingresosbot ingresosbot-web
-y publica el panel con SSL en https://bot.commonbird.com siguiendo deploy/CYBERPANEL_SETUP.md.
+y publica el panel con SSL en https://bot.commonbird.com siguiendo deploy/CYBERPANEL_SETUP.md
+(o deploy/MIGRAR_VPS.md, paso 5, en un VPS sin CyberPanel).
 MSG

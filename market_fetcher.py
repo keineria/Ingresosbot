@@ -2,11 +2,13 @@
 """
 market_fetcher.py — Velas OHLCV públicas sin API key (solo urllib de la librería estándar).
 
-Orden de fuentes (la primera que responda gana):
+Orden de fuentes por defecto (la primera que responda gana):
   1. Binance datos  https://data-api.binance.vision/api/v3/klines   (solo datos públicos; no lo bloquea el país del VPS)
   2. Binance        https://api.binance.com/api/v3/klines           (responde HTTP 451 desde algunos países, p. ej. EE. UU.)
   3. Bybit V5       https://api.bybit.com/v5/market/kline
   4. CSV local      data/candles/{SYMBOL}_{interval}.csv  (o la ruta que pases en fallback_csv)
+El orden se cambia con MARKET_SOURCES en el .env, p. ej. MARKET_SOURCES=binance,binance_vision,bybit
+en un VPS donde api.binance.com sí responde (Europa).
 
 Siempre descarta la vela que aún no ha cerrado y devuelve el DataFrame normalizado
 (time, open, high, low, close, volume) que consume quant_core_engine.py.
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -41,6 +44,7 @@ BYBIT_INTERVAL = {"1m": "1", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "2
 DEFAULT_CANDLE_DIR = Path("data/candles")
 USER_AGENT = "Ingresosbot-market-fetcher/1.0"
 DEFAULT_SOURCES = ("binance_vision", "binance", "bybit")
+KNOWN_SOURCES = frozenset(DEFAULT_SOURCES)
 
 
 class FetchError(RuntimeError):
@@ -51,6 +55,18 @@ def _http_get_json(url: str, timeout: float = 10.0) -> object:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def configured_sources() -> tuple[str, ...]:
+    """Orden de fuentes de MARKET_SOURCES (separadas por comas) o DEFAULT_SOURCES si no está definido."""
+    raw = os.environ.get("MARKET_SOURCES", "").strip()
+    if not raw:
+        return DEFAULT_SOURCES
+    names = tuple(dict.fromkeys(n.strip().lower() for n in raw.split(",") if n.strip()))
+    unknown = [n for n in names if n not in KNOWN_SOURCES]
+    if unknown:
+        raise ValueError(f"MARKET_SOURCES tiene fuentes desconocidas {unknown}; usa {sorted(KNOWN_SOURCES)}")
+    return names
 
 
 def _check_args(symbol: str, interval: str, limit: int) -> None:
@@ -126,11 +142,12 @@ def default_csv_path(symbol: str, interval: str, base: Path = DEFAULT_CANDLE_DIR
 
 
 def fetch_candles(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 1000,
-                  fallback_csv: str | Path | None = None, sources: tuple[str, ...] = DEFAULT_SOURCES,
+                  fallback_csv: str | Path | None = None, sources: tuple[str, ...] | None = None,
                   get: Callable[[str], object] = _http_get_json, now_ms: int | None = None,
                   verbose: bool = False) -> tuple[pd.DataFrame, dict]:
     """Devuelve (velas, info). info["source"] dice de dónde salieron y info["errors"] qué falló."""
     _check_args(symbol, interval, limit)
+    sources = sources or configured_sources()
     now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
     errors: dict[str, str] = {}
     fetchers = {
@@ -157,11 +174,12 @@ def fetch_candles(symbol: str = "BTCUSDT", interval: str = "1h", limit: int = 10
     raise FetchError(f"Sin red y sin CSV local ({path}). Errores: {errors}")
 
 
-def fetch_price(symbol: str, sources: tuple[str, ...] = DEFAULT_SOURCES,
+def fetch_price(symbol: str, sources: tuple[str, ...] | None = None,
                 get: Callable[[str], object] = _http_get_json) -> tuple[float, str]:
     """Último precio público (sin API key). Devuelve (precio, fuente)."""
     if not symbol.isalnum():
         raise ValueError("symbol debe ir sin separadores, p. ej. BTCUSDT")
+    sources = sources or configured_sources()
     sym = urllib.parse.urlencode({"symbol": symbol.upper()})
     errors: dict[str, str] = {}
     for name in sources:
