@@ -16,7 +16,7 @@ Endpoints:
   POST /api/scan-now     diagnóstico de las 3 capas en cada par configurado (no abre órdenes)
   POST /api/kill-switch  {"action": "halt" | "resume" | "toggle", "reason": "..."}
   GET  /api/ai           agentes de IA: gasto del mes, pausa activa, sugerencias pendientes, últimas decisiones
-  POST /api/ai/decide    {"kind": "pause" | "hypothesis", "id": N, "action": "on" | "no" | "off" | "ok"}
+  POST /api/ai/decide    {"kind": "pause" | "hypothesis" | "permission", "id": N, "action": "on" | "no" | "off" | "ok"}
 
 Uso:
   python web_server.py                      # lee .env
@@ -216,14 +216,16 @@ class DashboardApp:
         return ai_agents.ai_summary(svc.store, cfg, svc.s, svc.now())
 
     def ai_decide(self, body: dict, source: str = "api") -> dict:
-        kind = {"pause": "p", "hypothesis": "h"}.get(str(body.get("kind", "")))
+        kind = {"pause": "p", "hypothesis": "h", "permission": "a"}.get(str(body.get("kind", "")))
         action = str(body.get("action", ""))
         try:
             item = int(body.get("id"))
         except (TypeError, ValueError):
             item = None
-        if kind is None or item is None or action not in ({"on", "no", "off"} if kind == "p" else {"ok", "no"}):
-            raise ApiError(HTTPStatus.BAD_REQUEST, 'usa {"kind": "pause"|"hypothesis", "id": N, "action": ...}')
+        allowed = {"p": {"on", "no", "off"}, "h": {"ok", "no"}, "a": {"on", "off"}}
+        if kind is None or item is None or action not in allowed[kind]:
+            raise ApiError(HTTPStatus.BAD_REQUEST,
+                           'usa {"kind": "pause"|"hypothesis"|"permission", "id": N, "action": ...}')
         with self._db_lock:
             msg = self._ai_service().decide(kind, item, action, by=source)
         log.warning("IA: %s #%s %s por %s -> %s", body.get("kind"), item, action, source, msg)

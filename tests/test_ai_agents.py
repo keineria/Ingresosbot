@@ -109,10 +109,10 @@ class TestSchemaAndClient(unittest.TestCase):
         down = FakeProvider("groq", [ProviderError("HTTP 503")])
         good = FakeProvider("gemini", [VOTE_OK])
         c = client(store, bad, down, good)
-        ans = c.ask("analista", "s", "u", ag.ANALISTA_SCHEMA, tier="smart")
+        ans = c.ask("analista", "s", "u", ag.ANALISTA_SCHEMA)
         self.assertEqual(ans.provider, "gemini")
         self.assertEqual(len(c.last_errors), 2)
-        self.assertEqual(bad.calls[0]["model"], "claude-sonnet-5-5")
+        self.assertEqual((bad.calls[0]["model"], bad.calls[0]["effort"]), ("claude-opus-5-5", "high"))
         self.assertAlmostEqual(store.month_cost(NOW), 0.01)              # la respuesta inválida también costó
         self.assertEqual(store.decisions()[0]["decision"], "ERROR_ESQUEMA")
 
@@ -350,11 +350,18 @@ class TestBotRunnerGate(unittest.TestCase):
                         price_source=lambda s: float(data[s].close.iloc[-1]), clock=clock, ai_gate=gate)
         return bot, bot.candle_cycle()
 
-    def gate(self, mode, *replies, store=None):
+    def gate(self, mode, *replies, store=None, lab=False):
         store = store or AIStore(":memory:")
         prov = FakeProvider("anthropic", list(replies) or [VOTE_OK])
+        settings = ag.AgentSettings(bots=[], analyst_mode=mode, lab=False)
         return ag.AIGate("trading_state", store, client(store, prov), mode, FakeTelegram(),
-                         clock=lambda: NOW.timestamp(), interval="1h"), prov
+                         clock=lambda: NOW.timestamp(), interval="1h", profile="oficial_1h", settings=settings,
+                         lab=lab, sleep=lambda s: None, wait_s=4), prov
+
+    @staticmethod
+    def grant(store, permission):
+        row = store.permission("oficial_1h", permission, at=iso(NOW))
+        store.set_permission(row["id"], "activo", iso(NOW), "prueba")
 
     def test_without_ai_nothing_changes(self):
         bot, s = self.run_bot(ag.AIGate("trading_state"))
@@ -372,22 +379,74 @@ class TestBotRunnerGate(unittest.TestCase):
         self.assertEqual((vote["decision"], vote["mode"]), ("VETO", "sombra"))
         self.assertIn("BTCUSDT|", vote["ref"])
 
-    def test_active_needs_track_record(self):
-        gate, _ = self.gate("activo", VOTE_VETO)
-        self.assertEqual(gate.effective_mode()[0], "sombra")
+    def test_veto_only_with_the_permission(self):
+        gate, _ = self.gate("escalera", VOTE_VETO)
         bot, s = self.run_bot(gate)
-        self.assertEqual(s["symbols"]["BTCUSDT"]["decision"], "LONG")   # sin historial, sigue en sombra
+        self.assertEqual(s["symbols"]["BTCUSDT"]["decision"], "LONG")   # sin el permiso, sigue en sombra
+        self.assertIn("en sombra", gate.telegram.texts()[-1])
 
-        store = AIStore(":memory:")
-        for i in range(30):                                         # 30 votos: los vetos rindieron peor
-            vid = store.record("analista", iso(NOW), bot="trading_state", ref=f"X|{i}",
-                               decision="VETO" if i < 6 else "OK", mode="sombra")
-            store.resolve_vote(vid, -1.0 if i < 6 else 0.5, iso(NOW))
-        gate, _ = self.gate("activo", VOTE_VETO, store=store)
-        self.assertEqual(gate.effective_mode()[0], "activo")
+        gate, _ = self.gate("escalera", VOTE_VETO)
+        self.grant(gate.store, "veto")
         bot, s = self.run_bot(gate)
         self.assertEqual(s["symbols"]["BTCUSDT"]["decision"], "VETOED")
         self.assertEqual(bot.sm.positions(), [])
+        self.assertIn("aplicado", gate.telegram.texts()[-1])
+
+        gate, _ = self.gate("sombra", VOTE_VETO)                      # modo sombra: nunca aplica
+        self.grant(gate.store, "veto")
+        self.assertEqual(self.run_bot(gate)[1]["symbols"]["BTCUSDT"]["decision"], "LONG")
+
+        gate, _ = self.gate("escalera", VOTE_VETO, lab=True)          # el laboratorio nunca aplica
+        self.grant(gate.store, "veto")
+        self.assertEqual(self.run_bot(gate)[1]["symbols"]["BTCUSDT"]["decision"], "LONG")
+        self.assertEqual(gate.telegram.sent, [])
+
+    def test_reduce_halves_size_only_with_permission(self):
+        base, _ = self.run_bot(ag.AIGate("trading_state"))
+        full = base.sm.positions("BTCUSDT")[0]
+        gate, _ = self.gate("escalera", {"voto": "REDUCIR", "confianza": "media", "motivo": "Volátil."})
+        bot, s = self.run_bot(gate)
+        self.assertEqual(bot.sm.positions("BTCUSDT")[0]["position_units"], full["position_units"])
+        gate, _ = self.gate("escalera", {"voto": "REDUCIR", "confianza": "media", "motivo": "Volátil."})
+        self.grant(gate.store, "reducir")
+        bot, s = self.run_bot(gate)
+        half = bot.sm.positions("BTCUSDT")[0]
+        self.assertEqual(s["symbols"]["BTCUSDT"]["ai_size_factor"], 0.5)
+        self.assertAlmostEqual(half["position_units"], full["position_units"] / 2, places=6)
+        self.assertAlmostEqual(half["risk_usd"], full["risk_usd"] / 2, delta=0.02)
+        self.assertEqual((half["stop_loss"], half["entry_price"]), (full["stop_loss"], full["entry_price"]))
+
+    def test_one_vote_per_signal_between_lab_and_real_bot(self):
+        store = AIStore(":memory:")
+        lab, prov = self.gate("escalera", VOTE_VETO, store=store, lab=True)
+        self.run_bot(lab)
+        real, prov2 = self.gate("escalera", VOTE_OK, store=store)
+        bot, s = self.run_bot(real)
+        self.assertEqual(s["symbols"]["BTCUSDT"]["ai_vote"], "VETO")   # reutiliza el voto, no pregunta otra vez
+        self.assertEqual(prov2.calls, [])
+        self.assertEqual(len(store.decisions("analista")), 1)
+
+        store = AIStore(":memory:")                                   # otro proceso la está consultando
+        ref = f"BTCUSDT|{(BULL.time.iloc[-1] + pd.Timedelta(hours=1)).isoformat()}"
+        store.take_vote_lock("oficial_1h", ref, iso(NOW))
+        waiting, prov3 = self.gate("escalera", VOTE_VETO, store=store)
+        bot, s = self.run_bot(waiting)
+        self.assertEqual(prov3.calls, [])
+        self.assertEqual(s["symbols"]["BTCUSDT"]["decision"], "LONG")   # sin voto a tiempo: sigue la regla
+
+    def test_ai_exit_is_executed_by_the_bot(self):
+        gate, _ = self.gate("escalera")
+        bot, s = self.run_bot(gate)
+        pos = bot.sm.positions("BTCUSDT")[0]
+        gate.store.request_exit(iso(NOW), "trading_state", "BTCUSDT", pos["opened_at"], "agotamiento")
+        gate.store.request_exit(iso(NOW), "trading_state", "ETHUSDT", "2020-01-01", "no existe")
+        ev = bot.watch_cycle()
+        self.assertEqual([e["exit_reason"] for e in ev], ["AI_EXIT"])
+        self.assertEqual(bot.sm.positions(), [])
+        st = {r["symbol"]: r["status"] for r in gate.store.conn.execute("SELECT * FROM ai_exit_requests")}
+        self.assertEqual(st, {"BTCUSDT": "hecha", "ETHUSDT": "caducada"})
+        lab, _ = self.gate("escalera", lab=True)
+        self.assertEqual(lab.pending_exits(), [])
 
     def test_approved_pause_halts_layer1(self):
         gate, prov = self.gate("sombra")
@@ -422,7 +481,7 @@ class TestVoteResolution(unittest.TestCase):
             db = str(Path(d) / "trend_state.db")
             store = AIStore(Path(d) / "ai.db")
             gate = ag.AIGate("trend_state", store, client(store, FakeProvider("anthropic", [VOTE_OK])), "sombra",
-                             clock=lambda: NOW.timestamp(), interval="1h")
+                             clock=lambda: NOW.timestamp(), interval="1h", profile="oficial_1h")
             first_close = BULL.time.iloc[-1] + pd.Timedelta(hours=1)
             price = {"v": float(BULL.close.iloc[-1])}
             bot = BotRunner(RunnerConfig(["BTCUSDT"], "1h", db, 500.0), None, Notifier("https://hook", post=Rec()),
@@ -438,7 +497,7 @@ class TestVoteResolution(unittest.TestCase):
                                   price_source=lambda s: 1.0, candle_source=lambda *a: BULL,
                                   clock=lambda: NOW.timestamp())
             self.assertEqual(svc.resolve_votes(NOW), 1)
-            stats = store.vote_stats("trend_state")
+            stats = store.vote_stats("oficial_1h")
             self.assertEqual(stats["resolved"], 1)
             self.assertLess(stats["OK"]["avg_r"], -0.9)
             self.assertEqual(svc.resolve_votes(NOW), 0)
@@ -466,8 +525,208 @@ class TestLab(unittest.TestCase):
         self.assertEqual(ag.with_param(base, "donchian_len", 30.4).donchian_len, 30)
 
 
-if __name__ == "__main__":
-    unittest.main()
+# ════════════════════════════════════════════════════════════════════════════
+import ai_autonomy as au  # noqa: E402
+
+OPUS = "claude-opus-5-5"
+
+
+def add_votes(store, profile, pairs, agent="analista", model=OPUS, start=0):
+    """pairs: [(voto, R real, R si cerraba)]: votos ya resueltos."""
+    for i, (vote, r, alt) in enumerate(pairs, start):
+        vid = store.record(agent, iso(NOW), bot=profile, ref=f"S{i}|t", decision=vote,
+                           answer=Answer({"motivo": "m"}, "anthropic", model, 10, 10, 0.0))
+        store.resolve_vote(vid, r, iso(NOW))
+        if alt is not None:
+            store.conn.execute("UPDATE ai_decisions SET alt_r = ? WHERE id = ?", (alt, vid))
+    store.conn.commit()
+
+
+def strategy_votes(veto_hits, veto_misses, oks=40, ok_win_rate=0.36):
+    """Trend Rider: pierde -0.8 R el 64% y gana +2.3 R el 36%. Los vetos aciertan veto_hits de veto_hits+misses."""
+    rows = [("VETO", -0.8, None)] * veto_hits + [("VETO", 2.3, None)] * veto_misses
+    wins = int(oks * ok_win_rate)
+    return rows + [("OK", 2.3, None)] * wins + [("OK", -0.8, None)] * (oks - wins)
+
+
+class TestLadderRules(unittest.TestCase):
+    def ev(self, permission, pairs, agent="analista"):
+        store = AIStore(":memory:")
+        add_votes(store, "p", pairs, agent)
+        return au.evaluate(permission, store.resolved_votes("p", agent, model=OPUS), OPUS)
+
+    def test_random_vetoes_do_not_qualify(self):
+        ev = self.ev("veto", strategy_votes(8, 4))            # 67% de acierto = el azar: pierde dinero
+        self.assertFalse(ev.qualifies)
+        self.assertLess(ev.benefit_r, 0)
+        self.assertAlmostEqual(ev.base_rate, (8 + 26) / 52, places=3)
+
+    def test_skilled_vetoes_qualify_and_need_enough_cases(self):
+        ev = self.ev("veto", strategy_votes(11, 1))           # 92% de acierto, ahorra 6.5 R
+        self.assertTrue(ev.qualifies, ev.why)
+        self.assertGreater(ev.boot_low_r, 0)
+        small = self.ev("veto", strategy_votes(6, 0, oks=10))
+        self.assertFalse(small.qualifies)
+        self.assertIn("faltan", small.why)
+
+    def test_hit_rate_must_beat_chance(self):
+        # Ahorra dinero por suerte de una gran perdedora, pero acierta menos que el azar + 10 puntos.
+        rows = [("VETO", -6.0, None)] + [("VETO", -0.8, None)] * 6 + [("VETO", 0.5, None)] * 5
+        ev = self.ev("veto", rows + [("OK", -0.8, None)] * 30 + [("OK", 2.3, None)] * 10)
+        self.assertGreater(ev.benefit_r, 0)
+        self.assertFalse(ev.qualifies)
+        self.assertIn("acierto", ev.why)
+
+    def test_reduce_and_exit_benefits(self):
+        self.assertEqual(au.benefits("reducir", [{"decision": "REDUCIR", "outcome_r": -1.0}]), [0.5])
+        rows = [("SALIR", 0.5, 2.0)] * 18 + [("SALIR", 3.0, 1.5)] * 4 + [("MANTENER", 1.0, 1.2)] * 5
+        ev = self.ev("salida", rows, agent="salida")
+        self.assertEqual(ev.cases, 22)
+        self.assertAlmostEqual(ev.benefit_r, 18 * 1.5 - 4 * 1.5)
+        self.assertTrue(ev.qualifies, ev.why)
+
+    def test_other_models_do_not_count(self):
+        store = AIStore(":memory:")
+        add_votes(store, "p", strategy_votes(11, 1), model="claude-sonnet-5-5")
+        self.assertEqual(store.resolved_votes("p", model=OPUS), [])
+
+    def test_demotion_and_revoked_stays(self):
+        good = self.ev("veto", strategy_votes(11, 1))
+        self.assertEqual(au.next_status("sombra", good, True)[0], "activo")
+        self.assertIsNone(au.next_status("sombra", good, False))        # techo de AI_AUTONOMIA_MAX
+        self.assertIsNone(au.next_status("revocado", good, True))
+        bad = self.ev("veto", strategy_votes(11, 1) + [("VETO", 2.3, None)] * 6)
+        self.assertEqual(au.next_status("activo", bad, True)[0], "sombra")
+        self.assertEqual(au.next_status("activo", good, False)[0], "sombra")
+
+
+class TestLadderService(ServiceCase):
+    def test_promotion_button_and_revoke(self):
+        self.settings.bots = [ag.BotRef(str(self.dir / "trend_state.db"), "deploy/trend_params.json", "4h")]
+        self.settings.lab = False
+        svc = self.service()
+        profile = "trend_params_4h"
+        add_votes(self.store, profile, strategy_votes(11, 1))
+        changes = svc.ladder(NOW, force=True)
+        self.assertEqual([(c["permiso"], c["estado"]) for c in changes], [("veto", "activo")])
+        self.assertTrue(self.store.is_active(profile, "veto"))
+        msg = self.tg.sent[-1]
+        self.assertIn("ganó el permiso de vetar", msg["text"])
+        pid = self.store.permission(profile, "veto")["id"]
+        self.assertEqual(msg["reply_markup"]["inline_keyboard"][0][0]["callback_data"], f"ai:a:{pid}:off")
+
+        self.assertEqual(svc.decide("a", pid, "off"), "Permiso quitado.")
+        self.assertEqual(svc.ladder(NOW, force=True), [])               # revocado: no vuelve solo
+        self.assertFalse(self.store.is_active(profile, "veto"))
+        svc.decide("a", pid, "on")
+        self.assertEqual(svc.ladder(NOW, force=True)[0]["estado"], "activo")
+
+        self.settings.autonomy_max = 0                                  # Keiner baja el techo
+        self.assertEqual(svc.ladder(NOW, force=True)[0]["estado"], "sombra")
+        rows = svc.ladder_rows()
+        self.assertEqual({r["permiso"] for r in rows}, set(au.PERMISSIONS))
+        self.assertIn("vetar entradas", svc.ladder_text(rows))
+
+
+class TestExitGuardian(ServiceCase):
+    def setUp(self):
+        super().setUp()
+        from state_manager import StateManager
+        self.lab_db = str(self.dir / "sombra" / "oficial_1h.db")
+        self.real_db = str(self.dir / "trend_state.db")
+        Path(self.lab_db).parent.mkdir()
+        self.res = q.run_engine({"balance": 500}, candles=BULL, symbol="BTCUSDT", timeframe="1h")
+        self.opened = iso(NOW - timedelta(days=3))
+        for db in (self.lab_db, self.real_db):
+            with StateManager(db, 500.0, q.Params()) as sm:
+                sm.open_from_engine(self.res, opened_at=self.opened)
+        self.settings.bots = [ag.BotRef(self.real_db, "", "1h")]
+        self.settings.lab_profiles = [ag.LabProfile("", "1h", ["BTCUSDT"])]
+        self.settings.lab_dir = str(self.dir / "sombra")
+        rk = self.res["layer_3_atr_risk_guardian"]
+        self.entry, self.risk_px = rk["entry_price"], rk["entry_price"] - rk["stop_loss"]
+
+    def test_shadow_exit_vote_is_measured(self):
+        up = self.entry + 2 * self.risk_px                              # +2 R aprox.
+        prov = FakeProvider("anthropic", [{"voto": "SALIR", "confianza": "media", "motivo": "Agotamiento."}])
+        svc = self.service(prov, prices={"BTCUSDT": up})
+        out = svc.exit_votes(NOW)
+        self.assertEqual(out["asked"], 1)                               # la misma posición en 2 bases: 1 voto
+        self.assertEqual(out["exit_requests"], [])                      # sin permiso: no pide cerrar
+        vote = self.store.decisions("salida")[0]
+        self.assertEqual(vote["bot"], "oficial_1h")
+        self.assertGreater(vote["alt_r"], 1.8)
+        self.assertEqual(prov.calls[0]["model"], "claude-sonnet-5-5")   # potencia equilibrada
+        self.assertIn("en sombra", self.tg.texts()[-1])
+        self.assertEqual(svc.exit_votes(NOW + timedelta(days=2))["asked"], 0)   # ya pidió salir: no repite
+
+        from state_manager import StateManager                          # el laboratorio sigue y cierra peor
+        with StateManager(self.lab_db, 500.0, q.Params()) as sm:
+            sm.close_position(sm.positions()[0]["id"], self.entry + 0.5 * self.risk_px, "TRAILING_STOP",
+                              iso(NOW + timedelta(days=1)))
+        self.assertEqual(svc.resolve_votes(NOW), 1)
+        ev = svc.evidence("oficial_1h", "salida")
+        self.assertEqual(ev.cases, 1)
+        self.assertGreater(ev.benefit_r, 1.0)
+
+    def test_exit_needs_profit_and_permission(self):
+        prov = FakeProvider("anthropic", [{"voto": "SALIR", "confianza": "alta", "motivo": "Hackeo."}])
+        svc = self.service(prov, prices={"BTCUSDT": self.entry})
+        self.assertEqual(svc.exit_votes(NOW)["asked"], 0)               # sin ganancia de 1 R no se pregunta
+        svc.price_source = lambda s: self.entry + 2 * self.risk_px
+        row = self.store.permission("oficial_1h", "salida", at=iso(NOW))
+        self.store.set_permission(row["id"], "activo", iso(NOW), "prueba")
+        out = svc.exit_votes(NOW)
+        self.assertEqual(out["exit_requests"], ["trend_state:BTCUSDT"])
+        self.assertEqual(self.store.pending_exits("trend_state")[0]["opened_at"], self.opened)
+        self.assertEqual(self.store.pending_exits("oficial_1h"), [])     # el laboratorio nunca cierra
+
+
+class TestShadowLab(unittest.TestCase):
+    def test_lab_takes_every_signal_without_risking_anything(self):
+        import ai_lab
+        with tempfile.TemporaryDirectory() as d:
+            settings = ag.AgentSettings(bots=[], lab_dir=str(Path(d) / "sombra"),
+                                        lab_profiles=[ag.LabProfile("", "1h", ["BTCUSDT", "ETHUSDT"])])
+            cfg = AIConfig(enabled=True, anthropic_key="x", db_path=str(Path(d) / "ai.db"))
+            store = AIStore(cfg.db_path)
+            prov = FakeProvider("anthropic", [VOTE_VETO])
+            first_close = BULL.time.iloc[-1] + pd.Timedelta(hours=1)
+            data = {"BTCUSDT": BULL, "ETHUSDT": CHOP}
+            runner = ai_lab.make_runner(settings.lab_profiles[0], cfg, settings,
+                                        candle_source=lambda s, i, n: data[s],
+                                        price_source=lambda s: float(data[s].close.iloc[-1]),
+                                        clock=lambda: first_close.timestamp() + 10, store=store,
+                                        client=AIClient(cfg, store, [prov], clock=lambda: NOW.timestamp()))
+            self.assertEqual(runner.p.halt_losses, ai_lab.NO_LIMIT)
+            self.assertEqual(runner.p.risk_base_pct, ai_lab.LAB_RISK_PCT)
+            s = runner.candle_cycle()
+            self.assertEqual(s["symbols"]["BTCUSDT"]["decision"], "LONG")      # el VETO no bloquea aquí
+            pos = runner.sm.positions("BTCUSDT")[0]
+            self.assertLess(pos["risk_usd"], 60)
+            self.assertEqual(store.decisions("analista")[0]["mode"], "laboratorio")
+            self.assertTrue(Path(settings.lab_dir, "oficial_1h.db").exists())
+            runner.close()
+            store.close()
+
+
+class TestPrice(unittest.TestCase):
+    def test_presets_and_measured_costs(self):
+        est = ag.estimate_costs(None, NOW)["potencias"]
+        self.assertLess(est["economica"]["usd_mes"], est["equilibrada"]["usd_mes"])
+        self.assertLess(est["equilibrada"]["usd_mes"], est["maxima"]["usd_mes"])
+        self.assertLess(est["maxima"]["usd_mes"], 12)
+        store = AIStore(":memory:")
+        for day in range(10):                                         # 10 días, 2 votos de analista al día
+            for _ in range(2):
+                store.record("analista", iso(NOW - timedelta(days=day)), decision="OK",
+                             answer=Answer({}, "anthropic", OPUS, 3000, 4000, 0.09))
+        got = ag.estimate_costs(store, NOW)
+        self.assertEqual(got["medido"], ["analista"])
+        row = got["potencias"]["equilibrada"]["tareas"]["analista"]
+        self.assertAlmostEqual(row["llamadas_mes"], 60, delta=7)
+        cfg = AIConfig.from_env()
+        self.assertIn(cfg.potencia, ag.POTENCIA)
 
 
 class TestPanelApi(unittest.TestCase):
@@ -495,5 +754,15 @@ class TestPanelApi(unittest.TestCase):
                     app.ai_decide({"kind": "pause", "id": pid, "action": "ok"})
                 with self.assertRaises(ws.ApiError):
                     app.ai_decide({"kind": "trade", "id": 1, "action": "on"})
+                perm = store.permission("trend_params_4h", "veto", at=iso(NOW))
+                store.set_permission(perm["id"], "activo", iso(NOW), "prueba")
+                self.assertEqual(app.ai_decide({"kind": "permission", "id": perm["id"], "action": "off"})["message"],
+                                 "Permiso quitado.")
+                self.assertEqual(store.permission("trend_params_4h", "veto")["status"], "revocado")
+                self.assertEqual(app.ai_state()["escalera"][0]["status"], "revocado")
                 store.close()
                 app._ai_svc.store.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

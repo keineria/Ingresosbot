@@ -15,8 +15,10 @@ Dos ciclos:
 Cada evento se envía con notifier.py (webhook n8n y/o Telegram).
 
 Agentes de IA (ai_agents.py, apagados salvo AI_ENABLED=true en .env): solo pueden endurecer. Una pausa del vigía
-aprobada entra a la Capa 1 como external_risk "halt", y el analista vota cada señal (en sombra no bloquea nada).
-Si la IA falla o tarda, el bot sigue con sus reglas.
+aprobada entra a la Capa 1 como external_risk "halt"; el analista vota cada señal y, solo si ganó el permiso en la
+escalera (ai_autonomy.py), puede vetarla o reducir su tamaño a la mitad; el guardián de salidas, con su permiso,
+pide cerrar una posición y este archivo la cierra a precio de mercado (motivo AI_EXIT). Abrir operaciones, subir
+el tamaño o mover stops nunca depende de la IA. Si la IA falla o tarda, el bot sigue con sus reglas.
 
 Perfil Trend Rider (Params.strategy = "trend", SKILL_4): al cierre de cada vela, después de revisar SL con la vela,
 el trailing stop sube con el máximo desde la entrada (evento TRAILING_STOP). Para correrlo en paralelo al oficial
@@ -44,7 +46,7 @@ import pandas as pd
 
 import quant_core_engine as q
 from market_fetcher import INTERVAL_MS, FetchError, fetch_candles, fetch_price
-from ai_agents import AIGate
+from ai_agents import AIGate, scale_result
 from notifier import Notifier, load_env_file
 from state_manager import StateManager
 
@@ -95,6 +97,7 @@ class BotRunner:
                 log.warning("IA desactivada por un error al iniciarla: %s", exc)
                 ai_gate = AIGate(Path(cfg.db_path).stem)
         self.ai = ai_gate
+        self.ai.candle_source = self.candle_source   # contexto de mercado (BTC) para el analista
         self._seen_transitions = 0
         self._stop = False
 
@@ -236,6 +239,13 @@ class BotRunner:
             out.update(decision="VETOED", reason=f"analista de IA: {review['reason']}")
             log.info("%s: señal %s vetada por el analista (%s)", symbol, result["decision"], review["reason"])
             return out
+        factor = review.get("scale", 1.0)
+        if 0 < factor < 1:
+            smaller = scale_result(result, factor)
+            if smaller["order"]["notional_usd"] >= self.p.min_notional_usd:
+                result = smaller
+                out["ai_size_factor"] = factor
+                log.info("%s: el analista reduce el tamaño a %.0f%% (%s)", symbol, factor * 100, review["reason"])
 
         pid = self.sm.open_from_engine(result, opened_at=bar_close_iso)
         pos = next(p for p in self.sm.positions(symbol) if p["id"] == pid)
@@ -246,9 +256,29 @@ class BotRunner:
         return out
 
     # ── Ciclo b) vigilancia rápida ──────────────────────────────────────────
+    def _apply_ai_exits(self, at: str) -> list[dict]:
+        """Cierra las posiciones que pidió el guardián de salidas (solo si tiene el permiso de la escalera)."""
+        events = []
+        for req in self.ai.pending_exits():
+            pos = next((p for p in self.sm.positions(req["symbol"]) if p["opened_at"] == req["opened_at"]), None)
+            if pos is None:
+                self.ai.finish_exit(req["id"], "caducada")
+                continue
+            try:
+                price = float(self.price_source(pos["symbol"]))
+            except Exception as exc:
+                log.warning("Salida de IA: sin precio para %s (%s); se reintenta", pos["symbol"], exc)
+                continue
+            ev = {"event": "CLOSE", **self.sm.close_position(pos["id"], price, "AI_EXIT", at)}
+            log.info("Salida pedida por el guardián de IA: %s @ %.4f (%s)", pos["symbol"], price, req["reason"])
+            self._handle_events([ev])
+            self.ai.finish_exit(req["id"], "hecha")
+            events.append(ev)
+        return events
+
     def watch_cycle(self, now_s: float | None = None) -> list[dict]:
         at = pd.Timestamp((self.clock() if now_s is None else now_s), unit="s", tz="UTC").isoformat()
-        events: list[dict] = []
+        events: list[dict] = self._apply_ai_exits(at)
         for symbol in sorted({p["symbol"] for p in self.sm.positions()}):
             try:
                 price = float(self.price_source(symbol))

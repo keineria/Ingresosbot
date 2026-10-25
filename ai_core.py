@@ -8,15 +8,15 @@ La IA de Ingresosbot ASESORA; nunca decide. Tres garantías viven en este archiv
   2. Cadena de respaldo: Claude (Anthropic) -> Groq -> Gemini -> sin IA. Si todos fallan, el bot sigue con
      sus reglas como si la IA no existiera.
   3. Tope de gasto: cada llamada se apunta con su costo en data/ai_state.db; al llegar a AI_MONTHLY_BUDGET_USD
-     (2 USD por defecto) la IA se apaga sola hasta el mes siguiente.
+     la IA se apaga sola hasta el mes siguiente.
 
 Variables del .env (todas opcionales; sin AI_ENABLED=true no se llama a ninguna API):
   AI_ENABLED=true                 interruptor general
   ANTHROPIC_API_KEY=sk-ant-...    clave de console.anthropic.com
   GROQ_API_KEY / GEMINI_API_KEY   respaldos opcionales (planes gratis)
-  AI_MONTHLY_BUDGET_USD=2         tope mensual en USD
-  AI_MODEL_FAST=claude-haiku-5-5  vigía, coordinador
-  AI_MODEL_SMART=claude-sonnet-5-5  analista y auditor
+  AI_POTENCIA=equilibrada         economica | equilibrada | maxima: qué modelo usa cada agente (POTENCIA abajo)
+  AI_MODEL_<TAREA>=...            fuerza un modelo para una tarea, p. ej. AI_MODEL_ANALISTA=claude-opus-5-5
+  AI_MONTHLY_BUDGET_USD           tope mensual en USD (por defecto depende de la potencia: 2 / 5 / 12)
   AI_DB=data/ai_state.db
 """
 
@@ -53,7 +53,21 @@ PRICES: dict[str, tuple[float, float]] = {
     "openai/gpt-oss-20b": (0.075, 0.30),
     "gemini-3.5-flash-lite": (0.30, 2.50),
 }
-UNKNOWN_PRICE = (2.00, 10.00)
+UNKNOWN_PRICE = (5.00, 25.00)        # un modelo desconocido se cobra caro, por prudencia
+
+HAIKU, SONNET, OPUS = "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
+# Modelo y esfuerzo de cada tarea según AI_POTENCIA. Las tareas que deciden permisos de la escalera
+# (analista, salida) usan el modelo más fuerte que la potencia permite; su historial se mide por modelo.
+POTENCIA: dict[str, dict[str, tuple[str, str]]] = {
+    "economica": {"vigia": (HAIKU, "low"), "coordinador": (HAIKU, "low"), "analista": (SONNET, "medium"),
+                  "salida": (HAIKU, "medium"), "auditor": (SONNET, "medium"), "auditor_semanal": (SONNET, "medium")},
+    "equilibrada": {"vigia": (HAIKU, "low"), "coordinador": (HAIKU, "low"), "analista": (OPUS, "high"),
+                    "salida": (SONNET, "medium"), "auditor": (SONNET, "medium"), "auditor_semanal": (OPUS, "high")},
+    "maxima": {"vigia": (SONNET, "low"), "coordinador": (HAIKU, "low"), "analista": (OPUS, "high"),
+               "salida": (OPUS, "high"), "auditor": (OPUS, "high"), "auditor_semanal": (OPUS, "high")},
+}
+DEFAULT_BUDGET = {"economica": 2.0, "equilibrada": 5.0, "maxima": 12.0}
+DEFAULT_TASK = (HAIKU, "low")           # tareas sin entrada (p. ej. "prueba")
 TRUE = ("1", "true", "yes", "si", "sí", "on")
 
 SCHEMA_SQL = """
@@ -72,9 +86,11 @@ CREATE TABLE IF NOT EXISTS ai_decisions (
     tokens_in     INTEGER NOT NULL DEFAULT 0,
     tokens_out    INTEGER NOT NULL DEFAULT 0,
     cost_usd      REAL    NOT NULL DEFAULT 0,
-    outcome_r     REAL,                      -- analista: R real de la operación (cuando cierra)
+    outcome_r     REAL,                      -- analista y salida: R real de la operación (cuando cierra)
+    alt_r         REAL,                      -- salida: R que habría dado cerrar al precio del voto
     resolved_at   TEXT
 );
+CREATE INDEX IF NOT EXISTS ix_ai_decisions_ref ON ai_decisions (agent, bot, ref);
 CREATE INDEX IF NOT EXISTS ix_ai_decisions_agent ON ai_decisions (agent, at);
 CREATE TABLE IF NOT EXISTS ai_pauses (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,6 +123,36 @@ CREATE TABLE IF NOT EXISTS ai_news_seen (
 CREATE TABLE IF NOT EXISTS ai_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+-- Escalera de autonomía: un permiso por perfil (estrategia + temporalidad). Lo da y lo quita el código según
+-- las pruebas (ai_autonomy.py); Keiner puede quitarlo con un botón ("revocado") y solo él lo devuelve.
+CREATE TABLE IF NOT EXISTS ai_permissions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile     TEXT NOT NULL,
+    permission  TEXT NOT NULL CHECK (permission IN ('veto', 'reducir', 'salida')),
+    status      TEXT NOT NULL CHECK (status IN ('sombra', 'activo', 'revocado')),
+    since       TEXT NOT NULL,
+    reason      TEXT,
+    evidence    TEXT,
+    UNIQUE (profile, permission)
+);
+-- El guardián de salidas pide cerrar una posición; la cierra bot_runner.py (el único que ejecuta).
+CREATE TABLE IF NOT EXISTS ai_exit_requests (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at   TEXT NOT NULL,
+    bot          TEXT NOT NULL,              -- nombre de la base del bot real (p. ej. trend_state)
+    symbol       TEXT NOT NULL,
+    opened_at    TEXT NOT NULL,
+    reason       TEXT,
+    status       TEXT NOT NULL CHECK (status IN ('pendiente', 'hecha', 'caducada')),
+    done_at      TEXT
+);
+-- Una sola consulta por señal aunque la vean a la vez el bot real y el laboratorio en sombra.
+CREATE TABLE IF NOT EXISTS ai_vote_locks (
+    bot       TEXT NOT NULL,
+    ref       TEXT NOT NULL,
+    taken_at  TEXT NOT NULL,
+    PRIMARY KEY (bot, ref)
 );
 """
 
@@ -234,7 +280,7 @@ class Answer:
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self, api_key: str, post: Callable[..., dict] = _http_post, timeout: float = 60.0):
+    def __init__(self, api_key: str, post: Callable[..., dict] = _http_post, timeout: float = 150.0):
         self.api_key, self.post, self.timeout = api_key, post, timeout
 
     def ask(self, model: str, system: str, user: str, schema: dict, effort: str, max_tokens: int) -> Answer:
@@ -390,10 +436,31 @@ class AIStore:
         row = self.conn.execute("SELECT * FROM ai_hypotheses WHERE id = ?", (hyp_id,)).fetchone()
         return dict(row) if row else None
 
-    # ── Votos del analista ─────────────────────────────────────────────────
-    def unresolved_votes(self, bot: str) -> list[dict]:
-        rows = self.conn.execute("SELECT * FROM ai_decisions WHERE agent = 'analista' AND bot = ? "
-                                 "AND outcome_r IS NULL AND decision IN ('OK', 'VETO')", (bot,))
+    # ── Votos del analista y del guardián de salidas ───────────────────────
+    VOTES = {"analista": ("OK", "REDUCIR", "VETO"), "salida": ("MANTENER", "SALIR")}
+
+    def vote_for(self, agent: str, bot: str, ref: str, any_decision: bool = False) -> dict | None:
+        """Primer voto válido de esa señal (any_decision=True incluye SIN_IA: alguien ya lo intentó)."""
+        allowed = self.VOTES[agent]
+        sql = "SELECT * FROM ai_decisions WHERE agent = ? AND bot = ? AND ref = ?"
+        args: list = [agent, bot, ref]
+        if not any_decision:
+            sql, args = sql + f" AND decision IN ({', '.join('?' * len(allowed))})", args + list(allowed)
+        row = self.conn.execute(sql + " ORDER BY id LIMIT 1", args).fetchone()
+        return dict(row) if row else None
+
+    def take_vote_lock(self, bot: str, ref: str, at: str) -> bool:
+        """True solo para el primer proceso que ve la señal; los demás esperan su voto (vote_for)."""
+        cur = self.conn.execute("INSERT OR IGNORE INTO ai_vote_locks (bot, ref, taken_at) VALUES (?, ?, ?)",
+                                (bot, ref, at))
+        self.conn.commit()
+        return cur.rowcount == 1
+
+    def unresolved_votes(self, bot: str, agent: str = "analista") -> list[dict]:
+        allowed = self.VOTES[agent]
+        rows = self.conn.execute(
+            f"SELECT * FROM ai_decisions WHERE agent = ? AND bot = ? AND outcome_r IS NULL "
+            f"AND decision IN ({', '.join('?' * len(allowed))}) ORDER BY id", (agent, bot, *allowed))
         return [dict(r) for r in rows]
 
     def resolve_vote(self, vote_id: int, r_multiple: float, at: str) -> None:
@@ -401,19 +468,74 @@ class AIStore:
                           (r_multiple, at, vote_id))
         self.conn.commit()
 
+    def resolved_votes(self, bot: str, agent: str = "analista", model: str | None = None) -> list[dict]:
+        """Votos con resultado, el primero de cada señal (sin duplicados), en orden. Con model, solo los de ese
+        modelo: el historial de un modelo no vale para otro."""
+        sql = ("SELECT * FROM ai_decisions WHERE id IN (SELECT MIN(id) FROM ai_decisions WHERE agent = ? "
+               "AND bot = ? AND decision IN ({}) GROUP BY ref) AND outcome_r IS NOT NULL")
+        allowed = self.VOTES[agent]
+        args: list = [agent, bot, *allowed]
+        sql = sql.format(", ".join("?" * len(allowed)))
+        if model:
+            sql, args = sql + " AND model LIKE ?", args + [model + "%"]
+        return [dict(r) for r in self.conn.execute(sql + " ORDER BY id", args)]
+
     def vote_stats(self, bot: str | None = None) -> dict:
-        """Resultado real (R) de las operaciones según el voto del analista. Base para pasar de 'sombra' a 'activo'."""
+        """Resultado real (R) de las operaciones según el voto del analista."""
         sql = ("SELECT decision, COUNT(*) n, AVG(outcome_r) avg_r, SUM(outcome_r) sum_r FROM ai_decisions "
                "WHERE agent = 'analista' AND outcome_r IS NOT NULL")
         args: list = []
         if bot:
             sql, args = sql + " AND bot = ?", [bot]
-        out = {"OK": {"n": 0, "avg_r": None, "sum_r": 0.0}, "VETO": {"n": 0, "avg_r": None, "sum_r": 0.0}}
+        out = {k: {"n": 0, "avg_r": None, "sum_r": 0.0} for k in self.VOTES["analista"]}
         for r in self.conn.execute(sql + " GROUP BY decision", args):
             if r["decision"] in out:
                 out[r["decision"]] = {"n": r["n"], "avg_r": round(r["avg_r"], 3), "sum_r": round(r["sum_r"], 3)}
-        out["resolved"] = out["OK"]["n"] + out["VETO"]["n"]
+        out["resolved"] = sum(v["n"] for v in out.values())
         return out
+
+    # ── Escalera de autonomía ──────────────────────────────────────────────
+    def permission(self, profile: str, permission: str, at: str | None = None) -> dict:
+        row = self.conn.execute("SELECT * FROM ai_permissions WHERE profile = ? AND permission = ?",
+                                (profile, permission)).fetchone()
+        if row is None and at is not None:
+            self.conn.execute("INSERT OR IGNORE INTO ai_permissions (profile, permission, status, since, reason) "
+                              "VALUES (?, ?, 'sombra', ?, 'inicio')", (profile, permission, at))
+            self.conn.commit()
+            return self.permission(profile, permission)
+        return dict(row) if row else {"profile": profile, "permission": permission, "status": "sombra", "id": None}
+
+    def is_active(self, profile: str, permission: str) -> bool:
+        return self.permission(profile, permission)["status"] == "activo"
+
+    def set_permission(self, perm_id: int, status: str, at: str, reason: str, evidence: Any = None) -> dict | None:
+        self.conn.execute("UPDATE ai_permissions SET status = ?, since = ?, reason = ?, evidence = ? WHERE id = ?",
+                          (status, at, reason[:500], json.dumps(evidence, ensure_ascii=False, default=str)
+                           if evidence is not None else None, perm_id))
+        self.conn.commit()
+        row = self.conn.execute("SELECT * FROM ai_permissions WHERE id = ?", (perm_id,)).fetchone()
+        return dict(row) if row else None
+
+    def permissions(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM ai_permissions ORDER BY profile, id")]
+
+    # ── Peticiones de salida para bot_runner.py ────────────────────────────
+    def request_exit(self, at: str, bot: str, symbol: str, opened_at: str, reason: str) -> int | None:
+        if self.conn.execute("SELECT 1 FROM ai_exit_requests WHERE bot = ? AND symbol = ? AND opened_at = ?",
+                             (bot, symbol, opened_at)).fetchone():
+            return None
+        cur = self.conn.execute("INSERT INTO ai_exit_requests (created_at, bot, symbol, opened_at, reason, status) "
+                                "VALUES (?, ?, ?, ?, ?, 'pendiente')", (at, bot, symbol, opened_at, reason[:300]))
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def pending_exits(self, bot: str) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM ai_exit_requests WHERE bot = ? AND status = 'pendiente' ORDER BY id", (bot,))]
+
+    def finish_exit(self, req_id: int, status: str, at: str) -> None:
+        self.conn.execute("UPDATE ai_exit_requests SET status = ?, done_at = ? WHERE id = ?", (status, at, req_id))
+        self.conn.commit()
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -427,17 +549,28 @@ class AIConfig:
     gemini_key: str = ""
     groq_model: str = "openai/gpt-oss-20b"
     gemini_model: str = "gemini-3.5-flash-lite"
-    model_fast: str = "claude-haiku-5-5"
-    model_smart: str = "claude-sonnet-5-5"
-    effort_fast: str = "low"
-    effort_smart: str = "medium"
-    monthly_budget_usd: float = 2.0
+    potencia: str = "equilibrada"
+    monthly_budget_usd: float = 5.0
     db_path: str = "data/ai_state.db"
-    extra: dict = field(default_factory=dict)
+    overrides: dict = field(default_factory=dict)       # tarea -> (modelo, esfuerzo)
+
+    def task_model(self, task: str) -> tuple[str, str]:
+        if task in self.overrides:
+            return self.overrides[task]
+        return POTENCIA.get(self.potencia, POTENCIA["equilibrada"]).get(task, DEFAULT_TASK)
 
     @classmethod
     def from_env(cls) -> "AIConfig":
         e = os.environ.get
+        potencia = (e("AI_POTENCIA", "") or cls.potencia).strip().lower().replace("í", "i").replace("ó", "o")
+        if potencia not in POTENCIA:
+            log.warning("AI_POTENCIA=%s no existe; se usa equilibrada", potencia)
+            potencia = "equilibrada"
+        overrides = {}
+        for task, (model, effort) in POTENCIA[potencia].items():
+            m = e(f"AI_MODEL_{task.upper()}", "").strip()
+            if m:
+                overrides[task] = (m, e(f"AI_EFFORT_{task.upper()}", "").strip() or effort)
         return cls(
             enabled=env_flag("AI_ENABLED"),
             anthropic_key=e("ANTHROPIC_API_KEY", "").strip(),
@@ -445,12 +578,10 @@ class AIConfig:
             gemini_key=e("GEMINI_API_KEY", "").strip(),
             groq_model=e("AI_GROQ_MODEL", "").strip() or cls.groq_model,
             gemini_model=e("AI_GEMINI_MODEL", "").strip() or cls.gemini_model,
-            model_fast=e("AI_MODEL_FAST", "").strip() or cls.model_fast,
-            model_smart=e("AI_MODEL_SMART", "").strip() or cls.model_smart,
-            effort_fast=e("AI_EFFORT_FAST", "").strip() or cls.effort_fast,
-            effort_smart=e("AI_EFFORT_SMART", "").strip() or cls.effort_smart,
-            monthly_budget_usd=float(e("AI_MONTHLY_BUDGET_USD", "").strip() or cls.monthly_budget_usd),
+            potencia=potencia,
+            monthly_budget_usd=float(e("AI_MONTHLY_BUDGET_USD", "").strip() or DEFAULT_BUDGET[potencia]),
             db_path=e("AI_DB", "").strip() or cls.db_path,
+            overrides=overrides,
         )
 
 
@@ -479,8 +610,8 @@ class AIClient:
     def budget_left(self) -> float:
         return self.cfg.monthly_budget_usd - self.store.month_cost(utc_now(self.clock))
 
-    def ask(self, task: str, system: str, user: str, schema: dict, tier: str = "fast",
-            max_tokens: int | None = None) -> Answer | None:
+    def ask(self, task: str, system: str, user: str, schema: dict, max_tokens: int | None = None) -> Answer | None:
+        """El modelo y el esfuerzo salen de la tarea (AIConfig.task_model)."""
         self.last_errors = []
         if not self.available:
             return None
@@ -489,9 +620,8 @@ class AIClient:
             self.last_errors.append(f"presupuesto mensual agotado ({self.cfg.monthly_budget_usd:.2f} USD)")
             log.warning("IA: %s; %s no se ejecuta", self.last_errors[-1], task)
             return None
-        model = self.cfg.model_smart if tier == "smart" else self.cfg.model_fast
-        effort = self.cfg.effort_smart if tier == "smart" else self.cfg.effort_fast
-        max_tokens = max_tokens or (8000 if tier == "smart" else 4000)
+        model, effort = self.cfg.task_model(task)
+        max_tokens = max_tokens or {"low": 4000, "medium": 8000}.get(effort, 16000)
         for prov in self.providers:
             ans = None
             try:
