@@ -8,9 +8,13 @@ proxy inverso de OpenLiteSpeed con SSL (ver deploy/CYBERPANEL_SETUP.md), sin abr
 Autenticación: DASHBOARD_ACCESS_KEY en .env, enviada en la cabecera `X-Access-Key`
 (o `?key=` solo en peticiones GET). Sin clave configurada el servidor no arranca.
 
+Varios bots: si existe deploy/bots.json (o WEB_BOTS_FILE), el panel muestra cada bot de esa lista con su nombre
+y su estrategia, cada uno con su propia base SQLite. Las rutas /api/* aceptan ?bot=<id> (por defecto el primero).
+
 Endpoints:
   GET  /                 dashboard (static/index.html; la página pide la clave)
   GET  /healthz          {"ok": true} sin clave, para monitoreo
+  GET  /api/bots         lista de bots: nombre, estrategia explicada y resumen (balance, retorno, estado)
   GET  /api/state        cuenta, exposición, runner_meta, posiciones (con precio actual), últimos 20 trades,
                          PnL de hoy/semana/mes (UTC), curva de balance y precio actual de cada par
   POST /api/scan-now     diagnóstico de las 3 capas en cada par configurado (no abre órdenes)
@@ -40,7 +44,7 @@ from urllib.parse import parse_qs, urlsplit
 import pandas as pd
 
 import quant_core_engine as q
-from bot_runner import RunnerConfig, settings_from_env
+from bot_runner import RunnerConfig, bot_settings, load_bots, settings_from_env
 from market_fetcher import fetch_candles, fetch_price
 from notifier import Notifier, load_env_file
 from state_manager import StateManager
@@ -51,6 +55,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_BODY = 16 * 1024
 PRICE_TTL_S = 10.0
 MIN_KEY_LEN = 16
+BOT_TEXT_KEYS = ("summary", "how", "backtest", "service")
 
 
 class ApiError(Exception):
@@ -66,14 +71,19 @@ class DashboardApp:
                  notifier: Notifier | None = None,
                  candle_source: Callable[[str, str, int], pd.DataFrame] | None = None,
                  price_source: Callable[[str], float] | None = None,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, bot: dict | None = None):
         if not access_key:
             raise ValueError("DASHBOARD_ACCESS_KEY vacío: define una clave en .env antes de arrancar el panel.")
         self.cfg, self.p, self.access_key = cfg, params, access_key
-        self.notifier = notifier or Notifier.from_env()
+        bot = bot or {}
+        # Las alertas de los bots paralelos llevan su nombre delante, como las de bot_runner.py.
+        label = bot.get("name") if bot.get("id", "oficial") != "oficial" else None
+        self.notifier = notifier or Notifier.from_env(label=label)
         self.candle_source = candle_source or (lambda s, i, n: fetch_candles(s, i, n)[0])
         self.price_source = price_source or (lambda s: fetch_price(s)[0])
         self.clock = clock
+        self.bot = {"id": bot.get("id", "oficial"), "name": bot.get("name", "Bot Oficial"),
+                    **{k: bot[k] for k in BOT_TEXT_KEYS if k in bot}}
         self._price_cache: dict[str, tuple[float, float]] = {}
         self._scan_lock = threading.Lock()
         self._db_lock = threading.Lock()      # una escritura a la vez desde este proceso
@@ -130,9 +140,8 @@ class DashboardApp:
         market = {s: {"price": prices[s] if s in prices else self._price(s)} for s in self.cfg.symbols}
         return {
             "server_time": pd.Timestamp(self.clock(), unit="s", tz="UTC").isoformat(),
-            "config": {"symbols": self.cfg.symbols, "interval": self.cfg.interval,
-                       "max_leverage": self.p.max_leverage, "max_allocation_pct": self.p.max_allocation_pct,
-                       "allow_short": self.p.allow_short, "strategy": self.p.strategy},
+            "bot": self.bot,
+            "config": self._config(),
             "account": {k: acc[k] for k in ("status", "balance", "initial_balance", "daily_drawdown_pct",
                                             "consecutive_losses", "cooldown_bars_remaining", "day_peak_equity",
                                             "updated_at")} | {"manual_halt": bool(acc["manual_halt"])},
@@ -150,6 +159,37 @@ class DashboardApp:
             "recent_trades": trades,
             "last_scan": json.loads(last_scan) if last_scan else None,
             "control_log": control,
+        }
+
+    def _config(self) -> dict:
+        p = self.p
+        cfg = {"symbols": self.cfg.symbols, "interval": self.cfg.interval,
+               "max_leverage": p.max_leverage, "max_allocation_pct": p.max_allocation_pct,
+               "allow_short": p.allow_short if p.strategy != "trend" else p.trend_allow_short,
+               "strategy": p.strategy, "risk_base_pct": p.risk_base_pct}
+        if p.strategy == "trend":
+            cfg |= {"donchian_len": p.donchian_len, "trend_sl_atr_mult": p.trend_sl_atr_mult,
+                    "trail_atr_mult": p.trail_atr_mult, "daily_sma_len": p.daily_sma_len, "trend_entry": p.trend_entry}
+        else:
+            cfg |= {"sl_atr_mult": p.sl_atr_mult, "tp_atr_mult": p.tp_atr_mult, "be_atr_mult": p.be_atr_mult}
+        return cfg
+
+    # ── GET /api/bots (resumen de un bot, sin precios en vivo) ──
+    def summary(self) -> dict:
+        with self._sm() as sm:
+            acc = sm.account()
+            metrics = sm.metrics()
+            n_open = len(sm.positions())
+            last_cycle = sm.meta_get("last_cycle")
+        cycle = json.loads(last_cycle) if last_cycle else None
+        init = acc["initial_balance"]
+        return self.bot | {
+            "interval": self.cfg.interval, "symbols": self.cfg.symbols, "strategy": self.p.strategy,
+            "status": acc["status"], "manual_halt": bool(acc["manual_halt"]), "balance": acc["balance"],
+            "initial_balance": init,
+            "return_pct": round((acc["balance"] / init - 1) * 100, 2) if init else None,
+            "trades": metrics.get("trades"), "win_rate_pct": metrics.get("win_rate_pct"),
+            "open_positions": n_open, "last_cycle_at": cycle.get("processed_at") if cycle else None,
         }
 
     # ── POST /api/scan-now ──────────────────────────────────────────────────
@@ -175,7 +215,8 @@ class DashboardApp:
                         "would_open": r["decision"] in ("LONG", "SHORT") and symbol not in open_syms,
                         "layer_1": {k: r["layer_1_circuit_breaker"][k] for k in ("status", "risk_pct", "reasons")},
                         "layer_2": ({k: mr.get(k) for k in ("regime", "signal", "indicators", "long_checks",
-                                                          "short_checks", "blocking_filters")}
+                                                          "short_checks", "blocking_filters", "strategy",
+                                                          "entry_trigger", "breakout_long_checks")}
                                     if mr.get("evaluated") else {"evaluated": False, "reason": mr.get("reason")}),
                         "layer_3": ({k: rk.get(k) for k in ("side", "entry_price", "stop_loss", "take_profit",
                                                           "break_even_trigger", "break_even_new_sl",
@@ -213,7 +254,47 @@ class DashboardApp:
         return result
 
 
-def make_handler(app: DashboardApp) -> type[BaseHTTPRequestHandler]:
+class BotRegistry:
+    """Varios DashboardApp (uno por bot de deploy/bots.json) detrás del mismo servidor y la misma clave."""
+
+    def __init__(self, apps: list[DashboardApp]):
+        if not apps:
+            raise ValueError("No hay bots que mostrar")
+        self.apps = {a.bot["id"]: a for a in apps}
+        self.default = apps[0].bot["id"]
+
+    @classmethod
+    def from_bots(cls, bots: list[dict], access_key: str, **kw) -> "BotRegistry":
+        apps = []
+        for b in bots:
+            cfg, p = bot_settings(b)
+            apps.append(DashboardApp(cfg, p, access_key, bot=b, **kw))
+        return cls(apps)
+
+    def check_key(self, provided: str | None) -> bool:
+        return self.apps[self.default].check_key(provided)
+
+    def get(self, bot_id: str | None) -> DashboardApp:
+        if not bot_id:
+            return self.apps[self.default]
+        if bot_id not in self.apps:
+            raise ApiError(HTTPStatus.NOT_FOUND, f"bot desconocido: {bot_id}")
+        return self.apps[bot_id]
+
+    def bots(self) -> dict:
+        out = []
+        for a in self.apps.values():
+            try:
+                out.append(a.summary())
+            except Exception as exc:
+                log.warning("Resumen de %s: %s", a.bot["id"], exc)
+                out.append(a.bot | {"error": f"{type(exc).__name__}: {exc}"})
+        return {"default": self.default, "bots": out}
+
+
+def make_handler(app: DashboardApp | BotRegistry) -> type[BaseHTTPRequestHandler]:
+    registry = app if isinstance(app, BotRegistry) else BotRegistry([app])
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "Ingresosbot"
         sys_version = ""
@@ -241,7 +322,7 @@ def make_handler(app: DashboardApp) -> type[BaseHTTPRequestHandler]:
             key = self.headers.get("X-Access-Key")
             if not key and allow_query:
                 key = (parse_qs(urlsplit(self.path).query).get("key") or [None])[0]
-            if app.check_key(key):
+            if registry.check_key(key):
                 return True
             time.sleep(0.3)                               # frena intentos de adivinar la clave
             self._json(HTTPStatus.UNAUTHORIZED, {"error": "clave de acceso inválida o ausente"})
@@ -261,6 +342,10 @@ def make_handler(app: DashboardApp) -> type[BaseHTTPRequestHandler]:
             if not isinstance(data, dict):
                 raise ApiError(HTTPStatus.BAD_REQUEST, "se esperaba un objeto JSON")
             return data
+
+        def _bot(self, body: dict | None = None) -> DashboardApp:
+            q_bot = (parse_qs(urlsplit(self.path).query).get("bot") or [None])[0]
+            return registry.get(q_bot or (body or {}).get("bot"))
 
         def _source(self) -> str:
             return self.headers.get("X-Forwarded-For", self.client_address[0]).split(",")[0].strip()
@@ -282,7 +367,10 @@ def make_handler(app: DashboardApp) -> type[BaseHTTPRequestHandler]:
                     self._json(HTTPStatus.OK, {"ok": True})
                 elif path == "/api/state":
                     if self._authorized(allow_query=True):
-                        self._json(HTTPStatus.OK, app.state())
+                        self._json(HTTPStatus.OK, self._bot().state())
+                elif path == "/api/bots":
+                    if self._authorized(allow_query=True):
+                        self._json(HTTPStatus.OK, registry.bots())
                 else:
                     self._json(HTTPStatus.NOT_FOUND, {"error": "no encontrado"})
             except ApiError as exc:
@@ -300,10 +388,11 @@ def make_handler(app: DashboardApp) -> type[BaseHTTPRequestHandler]:
                 if not self._authorized(allow_query=False):   # en POST solo cabecera (evita CSRF por URL)
                     return
                 body = self._body()
+                bot = self._bot(body)
                 if path == "/api/scan-now":
-                    self._json(HTTPStatus.OK, app.scan_now())
+                    self._json(HTTPStatus.OK, bot.scan_now())
                 else:
-                    self._json(HTTPStatus.OK, app.kill_switch(body, source=f"web:{self._source()}"))
+                    self._json(HTTPStatus.OK, bot.kill_switch(body, source=f"web:{self._source()}"))
             except ApiError as exc:
                 self._json(exc.status, {"error": exc.message})
             except Exception:
@@ -313,7 +402,7 @@ def make_handler(app: DashboardApp) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def build_server(app: DashboardApp, host: str = "127.0.0.1", port: int = 8050) -> ThreadingHTTPServer:
+def build_server(app: DashboardApp | BotRegistry, host: str = "127.0.0.1", port: int = 8050) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), make_handler(app))
     server.daemon_threads = True
     return server
@@ -339,9 +428,15 @@ def main(argv: list[str] | None = None) -> int:
     if host not in ("127.0.0.1", "localhost", "::1"):
         log.warning("Escuchando en %s: el panel queda expuesto fuera del proxy inverso.", host)
 
-    cfg, params = settings_from_env()
-    server = build_server(DashboardApp(cfg, params, key), host, port)
-    log.info("Panel en http://%s:%d (base %s, pares %s)", host, port, cfg.db_path, ",".join(cfg.symbols))
+    bots = load_bots(os.environ.get("WEB_BOTS_FILE") or None)
+    if bots:
+        registry = BotRegistry.from_bots(bots, key)
+    else:
+        cfg, params = settings_from_env()
+        registry = BotRegistry([DashboardApp(cfg, params, key)])
+    server = build_server(registry, host, port)
+    log.info("Panel en http://%s:%d con %d bot(s): %s", host, port, len(registry.apps),
+             ", ".join(f"{a.bot['name']} ({a.cfg.db_path})" for a in registry.apps.values()))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

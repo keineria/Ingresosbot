@@ -59,8 +59,10 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 chmod 600 "$APP_DIR/.env"
 
 say "5/6 Servicios systemd"
-# ingresosbot-trend.service (Trend Rider en paralelo) se instala pero no se activa: ver docs/TREND_RIDER.md.
-for unit in ingresosbot.service ingresosbot-web.service ingresosbot-trend.service; do
+# ingresosbot-trend.service (Trend Rider) e ingresosbot-tortuga.service (Tortuga 55) se instalan pero no se
+# activan: ver docs/TREND_RIDER.md y docs/ALTERNATIVAS.md. El informe diario (ingresosbot-report.timer) tampoco.
+for unit in ingresosbot.service ingresosbot-web.service ingresosbot-trend.service ingresosbot-tortuga.service \
+            ingresosbot-report.service ingresosbot-report.timer; do
   sed -e "s|/opt/Ingresosbot|$APP_DIR|g" \
       -e "s|^User=.*|User=$APP_USER|" \
       -e "s|^Group=.*|Group=$APP_USER|" \

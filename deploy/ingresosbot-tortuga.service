@@ -1,0 +1,25 @@
+# systemd: Tortuga 55 (ruptura de 55 días en velas diarias, cripto + oro PAXG) en paper trading,
+# EN PARALELO al bot oficial y a Trend Rider, con su propia base (data/tortuga_state.db).
+# Toda su configuración (pares, temporalidad, parámetros, balance) está en deploy/bots.json, id "tortuga".
+# deploy/install_almalinux.sh lo copia pero no lo activa. Para encenderlo:
+#   sudo systemctl enable --now ingresosbot-tortuga
+#   journalctl -u ingresosbot-tortuga -f        # ver el log en vivo
+# Comparte el .env solo para las alertas de Telegram, que llegan con el prefijo [Tortuga 55].
+[Unit]
+Description=Ingresosbot Tortuga 55 paper trading 24/7 (perfil paralelo, velas diarias)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ingresosbot
+Group=ingresosbot
+WorkingDirectory=/opt/Ingresosbot
+ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --env-file .env --bot tortuga --log-file logs/bot-tortuga.log
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

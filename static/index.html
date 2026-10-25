@@ -124,7 +124,7 @@
     .chip.up { color: var(--good); background: var(--good-soft); } .chip.down { color: var(--bad); background: var(--bad-soft); } .chip.flat { color: var(--ink-2); background: var(--inset); }
 
     /* ── Cabecera "En vivo" + KPIs ───────────────────────────────────────── */
-    main { padding: 32px 0 40px; }
+    main.wrap { padding-top: 28px; padding-bottom: 40px; }
     .hero-h { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
     .hero-h h1 { margin: 0; font-size: 28px; letter-spacing: -.02em; font-weight: 700; display: flex; align-items: center; gap: 10px; }
     .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: pulse 2s infinite; }
@@ -144,6 +144,28 @@
     @media (max-width: 1180px) { .kpis { grid-template-columns: repeat(3, 1fr); } .conn { grid-column: span 3; } .conn-grid { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 24px; } }
     @media (max-width: 640px) { .kpis { grid-template-columns: repeat(2, 1fr); } .conn { grid-column: span 2; } .conn-grid { grid-template-columns: 1fr; }
       .kpi.wide-sm { grid-column: span 2; } .hero-h h1 { font-size: 24px; } .kpi .val { font-size: 20px; } }
+
+    /* ── Selector de bots + ficha de estrategia ────────────────────────────── */
+    .bots { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 0 0 26px; }
+    @media (max-width: 640px) { .bots { grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 74%; overflow-x: auto;
+      scroll-snap-type: x mandatory; padding-bottom: 6px; margin-bottom: 18px; } .bot { scroll-snap-align: start; } }
+    .bot { text-align: left; font: inherit; color: inherit; cursor: pointer; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .bot:hover { border-color: var(--line-strong); }
+    .bot[aria-pressed="true"] { box-shadow: var(--glow); background: var(--card-strong); }
+    .bot .bh { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14.5px; }
+    .bot .bh .pill { margin-left: auto; }
+    .bot .bm { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--ink-3); }
+    .bot .bv { font-size: 18px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .strat { padding: 0; margin: 0 0 18px; }
+    .strat summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 12px 16px; font-weight: 600; font-size: 13.5px; }
+    .strat summary::-webkit-details-marker { display: none; }
+    .strat summary .i { color: var(--accent); }
+    .strat summary::after { content: "▾"; margin-left: auto; color: var(--ink-3); transition: transform .2s; }
+    .strat:not([open]) summary::after { transform: rotate(-90deg); }
+    .strat .sb { padding: 0 16px 14px; font-size: 13.5px; color: var(--ink-2); }
+    .strat .sb p { margin: 0 0 8px; color: var(--ink); }
+    .strat ol { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+    .strat .bt { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: var(--inset); border: 1px solid var(--line); font-size: 12.5px; }
 
     /* ── Cadena de decisión (flujo de nodos) ─────────────────────────────── */
     .section-h { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin: 34px 0 14px; }
@@ -300,14 +322,21 @@
 <main class="wrap">
   <div id="error" class="err hidden"></div>
 
+  <!-- Bots: cada uno con su estrategia y su propia cuenta simulada -->
+  <section id="bots" class="bots hidden" aria-label="Bots"></section>
+
   <!-- En vivo + KPIs -->
   <section>
     <div class="hero-h">
-      <h1><span id="live-dot" class="live-dot off"></span>En vivo</h1>
+      <h1><span id="live-dot" class="live-dot off"></span><span id="bot-title">En vivo</span></h1>
       <span id="status-badge" class="pill s-mute">…</span>
       <span id="manual-badge" class="pill s-bad hidden">KILL SWITCH ACTIVO</span>
     </div>
     <p class="hero-sub">Rendimiento en tiempo real del bot en modo paper. Última vela procesada: <span id="last-tick" class="num">—</span></p>
+    <details id="strat" class="card strat hidden" open>
+      <summary><svg class="i"><use href="#i-spark"/></svg><span id="strat-title">Cómo opera</span></summary>
+      <div class="sb"><p id="strat-sum"></p><ol id="strat-how"></ol><div id="strat-bt" class="bt"></div></div>
+    </details>
 
     <div class="kpis">
       <div class="card conn">
@@ -450,11 +479,12 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const STORE = 'ingresosbot.key', THEME = 'ingresosbot.theme', SYM = 'ingresosbot.symbol';
+  const STORE = 'ingresosbot.key', THEME = 'ingresosbot.theme', SYM = 'ingresosbot.symbol', BOT = 'ingresosbot.bot';
   const store = { get: (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } },
                   set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} } };
   let KEY = store.get(STORE) || '';
-  let state = null, scan = null, symbol = store.get(SYM) || '';
+  let state = null, scan = null, symbol = store.get(SYM) || '', bots = null, botId = store.get(BOT) || '';
+  const withBot = (path) => botId ? path + (path.includes('?') ? '&' : '?') + 'bot=' + encodeURIComponent(botId) : path;
 
   // La clave puede venir una vez por ?key= (se guarda y se quita de la URL).
   const urlKey = new URLSearchParams(location.search).get('key');
@@ -502,6 +532,14 @@
     'slope_ema20_lt_-0.20%': 'Pendiente EMA 20 menor a −0,2%', rsi_in_36_54: 'RSI entre 36 y 54',
     'extension_le_3.2ATR': 'Sin sobre-extensión (≤ 3,2 ATR)', short_enabled: 'Cortos permitidos',
   };
+  const checkLabel = (k) => {
+    if (CHECKS[k]) return CHECKS[k];
+    let m = /^breakout_close_gt_max(\d+)$/.exec(k);
+    if (m) return `Cierre supera el máximo de las ${m[1]} velas anteriores`;
+    m = /^daily_close_gt_sma(\d+)d$/.exec(k);
+    if (m) return `Cierre diario de ayer sobre su media de ${m[1]} días`;
+    return k;
+  };
   const RESULT = { WIN: ['Ganada', 's-good'], LOSS: ['Perdida', 's-bad'], BREAKEVEN: ['Break-even', 's-mute'] };
   const pill = (label, cls, plain) => `<span class="pill ${cls}${plain ? ' plain' : ''}">${esc(label)}</span>`;
 
@@ -522,6 +560,15 @@
   // ── Render principal ──
   function render(s) {
     state = s;
+    const bt = s.bot || {};
+    $('bot-title').textContent = bots && bots.length > 1 ? bt.name : 'En vivo';
+    document.title = (bots && bots.length > 1 ? bt.name + ' · ' : '') + 'Ingresosbot · Panel';
+    $('strat').classList.toggle('hidden', !bt.summary);
+    $('strat-title').textContent = 'Cómo opera ' + (bt.name || 'el bot');
+    $('strat-sum').textContent = bt.summary || '';
+    $('strat-how').innerHTML = (bt.how || []).map((h) => `<li>${esc(h)}</li>`).join('');
+    $('strat-bt').innerHTML = bt.backtest ? '<b>Prueba con datos reales:</b> ' + esc(bt.backtest) : '';
+    $('strat-bt').classList.toggle('hidden', !bt.backtest);
     if (s.last_scan && (!scan || s.last_scan.scanned_at >= scan.scanned_at)) scan = s.last_scan;
     const a = s.account, m = s.metrics, x = s.exposure, c = s.config, per = s.periods || {};
     const st = STATUS[a.status] || [a.status, 's-mute'];
@@ -652,6 +699,14 @@
       <circle cx="${last[0]}" cy="${last[1]}" r="3" fill="var(--accent)" vector-effect="non-scaling-stroke"/></svg>`;
   }
 
+  const num = (v) => String(v).replace('.', ',');
+  function formulaHtml(c) {
+    if (c && c.strategy === 'trend') {
+      return `SL inicial = entrada − ${num(c.trend_sl_atr_mult)} × ATR<br>Salida: trailing ${num(c.trail_atr_mult)} × ATR bajo el máximo (solo sube)<br>Sin take profit fijo ni Break-Even<br>Riesgo ${num(c.risk_base_pct)}% · tamaño ≤ ${fmt(c.max_allocation_pct, 0)}% del balance`;
+    }
+    return 'SL = entrada − 1,6 × ATR<br>TP = entrada + 3,6 × ATR<br>BE = entrada + 1,5 × ATR → SL a +0,2%<br>Tamaño ≤ 85% del balance';
+  }
+
   let wireState = { l1: 'on', l2: 'on', l3: 'off', exe: 'off' };
 
   function renderFlow() {
@@ -692,14 +747,28 @@
     const dec = decision ? (DECISION[decision] || [decision, '']) : ['Sin datos', ''];
     const rg = regime ? (REGIME[regime] || [regime, 's-mute']) : null;
     let checksHtml = '', indHtml = '', extra = '';
-    if (l2 && l2.long_checks) {
+    const trend = l2 && l2.strategy === 'trend' && l2.breakout_long_checks;
+    if (trend) {
+      const ent = Object.entries(l2.breakout_long_checks);
+      const ok = ent.filter(([, v]) => v).length;
+      checksHtml = `<div class="subhead"><span>Reglas de entrada LONG</span><span>${ok}/${ent.length}</span></div>
+        <ul class="checks">${ent.map(([k, v]) => `<li class="${v ? 'ok' : 'no'}"><span class="mk">${v ? '✓' : '✕'}</span><span>${esc(checkLabel(k))}</span></li>`).join('')}</ul>`;
+      const ind = l2.indicators || {};
+      if (!nil(ind.donchian_high)) {
+        const gap = ind.close ? (ind.donchian_high / ind.close - 1) * 100 : null;
+        indHtml = `<div class="ind-grid">
+            <div class="ind"><b>${px(ind.donchian_high)}</b><span>máximo a romper</span></div>
+            <div class="ind"><b class="${gap > 0 ? '' : 'good'}">${nil(gap) ? '—' : (gap > 0 ? '+' + fmt(gap, 1) + '%' : 'roto')}</b><span>falta para la ruptura</span></div>
+            <div class="ind"><b>${px(ind.atr14)}</b><span>ATR 14</span></div></div>`;
+      }
+    } else if (l2 && l2.long_checks) {
       const sideShort = decision === 'SHORT' || (decision !== 'LONG' && l2.short_checks && l2.short_checks.short_enabled &&
         Object.values(l2.short_checks).filter(Boolean).length > Object.values(l2.long_checks).filter(Boolean).length + 1);
       const checks = sideShort ? l2.short_checks : l2.long_checks;
       const ent = Object.entries(checks).filter(([k]) => k !== 'short_enabled');
       const ok = ent.filter(([, v]) => v).length;
       checksHtml = `<div class="subhead"><span>Reglas de entrada ${sideShort ? 'SHORT' : 'LONG'}</span><span>${ok}/${ent.length}</span></div>
-        <ul class="checks">${ent.map(([k, v]) => `<li class="${v ? 'ok' : 'no'}"><span class="mk">${v ? '✓' : '✕'}</span><span>${esc(CHECKS[k] || k)}</span></li>`).join('')}</ul>`;
+        <ul class="checks">${ent.map(([k, v]) => `<li class="${v ? 'ok' : 'no'}"><span class="mk">${v ? '✓' : '✕'}</span><span>${esc(checkLabel(k))}</span></li>`).join('')}</ul>`;
       const ind = l2.indicators || {};
       if (!nil(ind.rsi14)) {
         const rsiPos = Math.max(0, Math.min(100, ind.rsi14));
@@ -742,7 +811,7 @@
     } else {
       $('l3-pill').innerHTML = pill('En espera', 's-mute');
       $('l3-b').innerHTML = `<div class="muted" style="font-size:13px;margin-bottom:8px">${esc(l3 && l3.reason ? 'Sin cálculo: ' + l3.reason : 'Se calcula solo cuando Capa 2 da señal.')}</div>
-        <div class="formula">SL = entrada − 1,6 × ATR<br>TP = entrada + 3,6 × ATR<br>BE = entrada + 1,5 × ATR → SL a +0,2%<br>Tamaño ≤ 85% del balance</div>`;
+        <div class="formula">${formulaHtml(s.config)}</div>`;
     }
 
     // Ejecución
@@ -855,15 +924,45 @@
 
   let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { drawWires(); drawChart(); }, 120); });
 
+  // ── Bots ──
+  function renderBots() {
+    const el = $('bots');
+    el.classList.toggle('hidden', !bots || bots.length < 2);
+    if (!bots || bots.length < 2) return;
+    el.innerHTML = bots.map((b) => {
+      const st = b.error ? ['Error', 's-bad'] : !b.last_cycle_at ? ['Sin arrancar', 's-mute']
+        : b.manual_halt ? ['Kill switch', 's-bad'] : (STATUS[b.status] || [b.status, 's-mute']);
+      const syms = (b.symbols || []).map((x) => x.replace(/USDT$/, '')).join(' · ');
+      return `<button type="button" class="card bot" data-bot="${esc(b.id)}" aria-pressed="${b.id === botId}">
+        <span class="bh">${esc(b.name)}${pill(st[0], st[1])}</span>
+        <span class="bm"><span class="bv ${tone(b.return_pct)}">${nil(b.return_pct) ? '—' : signed(b.return_pct) + '%'}</span>
+          <span>${nil(b.balance) ? '' : esc(usd(b.balance))}</span></span>
+        <span class="bm"><span>${esc(b.interval || '')} · ${esc(syms)}</span><span>${nil(b.trades) ? '' : b.trades + ' ops'}</span></span></button>`;
+    }).join('');
+    const sel = el.querySelector('[aria-pressed="true"]');
+    if (sel && el.scrollWidth > el.clientWidth) el.scrollLeft = sel.offsetLeft - el.offsetLeft;
+  }
+  if (window.matchMedia('(max-width: 640px)').matches) $('strat').open = false;   // en el móvil, plegada
+  $('bots').addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-bot]'); if (!b || b.dataset.bot === botId) return;
+    botId = b.dataset.bot; store.set(BOT, botId); scan = null; state = null; renderBots(); refresh();
+  });
+
   // ── Acciones ──
   async function refresh() {
-    try { render(await api('/api/state')); showError(''); } catch (e) { showError(e.message); }
+    try {
+      const list = await api('/api/bots');
+      bots = list.bots || [];
+      if (!bots.some((b) => b.id === botId)) botId = list.default || (bots[0] && bots[0].id) || '';
+      renderBots();
+      render(await api(withBot('/api/state'))); showError('');
+    } catch (e) { showError(e.message); }
   }
   $('btn-refresh').addEventListener('click', refresh);
 
   $('btn-scan').addEventListener('click', async () => {
     const btn = $('btn-scan'); btn.disabled = true; btn.lastChild.textContent = 'Escaneando…';
-    try { scan = await api('/api/scan-now', { method: 'POST', body: '{}' }); renderFlow(); showError(''); }
+    try { scan = await api(withBot('/api/scan-now'), { method: 'POST', body: '{}' }); renderFlow(); showError(''); }
     catch (e) { showError(e.message); }
     finally { btn.disabled = false; btn.lastChild.textContent = 'Escanear ahora'; }
   });
@@ -871,7 +970,8 @@
   let halting = true;
   $('btn-kill').addEventListener('click', () => {
     halting = !(state && state.account.manual_halt);
-    $('kill-title').textContent = halting ? '¿Activar el Kill Switch?' : '¿Desactivar el Kill Switch?';
+    const who = state && state.bot && bots && bots.length > 1 ? ' de ' + state.bot.name : '';
+    $('kill-title').textContent = (halting ? '¿Activar el Kill Switch' : '¿Desactivar el Kill Switch') + who + '?';
     $('kill-text').textContent = halting
       ? 'El bot no abrirá posiciones nuevas. Las que ya están abiertas conservan su stop loss y take profit.'
       : 'El estado volverá a lo que digan las reglas del Circuit Breaker (Capa 1).';
@@ -884,7 +984,7 @@
   $('kill-form').addEventListener('submit', async (ev) => {
     ev.preventDefault(); closeModal('kill-modal');
     try {
-      const r = await api('/api/kill-switch', { method: 'POST', body: JSON.stringify({ action: halting ? 'halt' : 'resume', reason: halting ? $('kill-reason').value : '' }) });
+      const r = await api(withBot('/api/kill-switch'), { method: 'POST', body: JSON.stringify({ action: halting ? 'halt' : 'resume', reason: halting ? $('kill-reason').value : '' }) });
       showError(!halting && r.status_after !== 'ACTIVE' ? 'Kill switch desactivado, pero el Circuit Breaker mantiene la cuenta en ' + r.status_after + '.' : '');
       refresh();
     } catch (e) { showError(e.message); }
