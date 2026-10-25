@@ -79,7 +79,8 @@ class Params:
     tp_atr_mult: float = 3.6
     be_atr_mult: float = 1.5
     be_fee_offset_pct: float = 0.2     # SL nuevo = Entry * (1 + 0.2%) en long
-    max_allocation_pct: float = 85.0   # tope del capital por posición
+    max_allocation_pct: float = 85.0   # tope del capital por posición (y del total comprometido entre pares)
+    max_position_pct: float = 0.0      # >0: tope MÁS BAJO por posición, para tener varias monedas a la vez
     max_leverage: float = 1.0          # 1.0 = Spot. En Futuros el tope escala a 85% × max_leverage
     price_tick: float = 0.01           # redondeo de precios ("al centavo")
     qty_step: float = 0.000001         # paso mínimo de cantidad del exchange
@@ -723,7 +724,8 @@ def atr_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
     sl_distance_pct = round(abs(entry - sl) / entry, 12)         # en fracción
     risk_usd_target = balance * risk_pct / 100.0
     size_by_risk = risk_usd_target / sl_distance_pct
-    size_cap = balance * p.max_allocation_pct / 100.0 * p.max_leverage
+    per_pos = min(p.max_allocation_pct, p.max_position_pct) if p.max_position_pct > 0 else p.max_allocation_pct
+    size_cap = balance * per_pos / 100.0 * p.max_leverage
     capped = size_by_risk > size_cap
     size_usd = floor_to_step(min(size_cap, size_by_risk), 0.01)
     qty = floor_to_step(size_usd / entry, p.qty_step)

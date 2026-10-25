@@ -32,6 +32,7 @@ Uso:
   python intraday_lab.py full --csv-dir data/lab_velas --out-dir data/lab_momentos --workers 2
   python intraday_lab.py round2 --csv-dir data/lab_velas --out-dir data/lab_ronda2 --workers 2   # filtros sobre Trend Rider
   python intraday_lab.py round3 --csv-dir data/lab_velas --out-dir data/lab_ronda3 --workers 2   # empuje y cierres
+  python intraday_lab.py universe --csv-dir data/lab_velas --out-dir data/lab_universo --workers 2  # 22 monedas
   python intraday_lab.py trend --csv-dir data/lab_velas --out-dir data/lab_x \
       --variants '{"4h": [{}, {"trend_exit_low_len": 10, "trend_min_vol_ratio": 1.3}]}'      # cualquier combinación
 """
@@ -54,6 +55,10 @@ import quant_core_engine as q
 FEE = 0.0008
 SLIP = 0.0002
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
+# Universo amplio de monedas líquidas de Binance spot (más monedas = más oportunidades sin bajar de temporalidad).
+WIDE_UNIVERSE = SYMBOLS + ("DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "TRXUSDT", "DOTUSDT", "LTCUSDT", "BCHUSDT",
+                           "NEARUSDT", "ATOMUSDT", "UNIUSDT", "SUIUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "INJUSDT",
+                           "FETUSDT")
 BARS_PER_HOUR = {"5m": 12, "15m": 4, "30m": 2, "1h": 1, "2h": 0.5, "4h": 0.25}
 
 # Sesiones en hora UTC (Colombia = UTC-5). Cortes clásicos de cripto: Asia, Londres, solape Londres-NY, NY, cierre.
@@ -699,7 +704,7 @@ _TREND_NAMES = {"trend_min_vol_ratio": "volumen ≥ {}x", "trend_min_atr_rank": 
                 "trend_exit_low_len": "cierre bajo mínimo de {} velas", "trend_exit_ema": "cierre bajo {}",
                 "trend_stale_bars": "fuera si a las {} velas no sube", "trend_tight_after_r": "trailing ajustado desde {}R",
                 "trend_tight_trail_atr": "a {} ATR", "trend_sl_atr_mult": "SL {} ATR", "trail_atr_mult": "trailing {} ATR",
-                "daily_sma_len": "SMA{}d", "trend_exit_on_filter": "sale si el filtro diario se da vuelta ({})"}
+                "daily_sma_len": "SMA{}d", "max_position_pct": "máx {}% por posición", "trend_exit_on_filter": "sale si el filtro diario se da vuelta ({})"}
 
 
 def trend_label(extra: dict) -> str:
@@ -891,9 +896,78 @@ def run_round2(csv_dir: str, symbols, out_dir: str, trade_from: str, balance: fl
     return text
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# MÁS MONEDAS Y MÁS VELOCIDAD: una sola cuenta con todo el universo
+# ════════════════════════════════════════════════════════════════════════════
+UNIVERSE_VARIANTS = {
+    "4h": [{}, {"max_position_pct": 30}, {"max_position_pct": 20}, {"max_position_pct": 30, "trend_exit_low_len": 10},
+           {"max_position_pct": 30, "trend_min_adx": 20}, {"max_position_pct": 30, "_fee": 0.075}],
+    "1h": [{}, {"donchian_len": 80}, {"donchian_len": 80, "max_position_pct": 30},
+           {"donchian_len": 80, "max_position_pct": 20}, {"donchian_len": 80, "max_position_pct": 30, "trend_exit_low_len": 40},
+           {"donchian_len": 80, "max_position_pct": 30, "trend_min_adx": 20},
+           {"donchian_len": 80, "max_position_pct": 30, "_fee": 0.075}],
+}
+
+
+def _universe_task(args):
+    import backtester as bt
+    extra, interval, trade_from, balance = args
+    extra = dict(extra)
+    fee = extra.pop("_fee", 0.08)
+    # Tick fino: monedas de centavos (DOGE, TRX, ARB...) no deben redondear el SL un 0.1%.
+    p = bt._params_for(q.Params(), dict(_trend_base(), **extra, price_tick=0.00000001, qty_step=0.00000001))
+    out = bt.run_portfolio_backtest(_PORT_DATA, p, bt.BacktestConfig(balance, fee_pct=fee), trade_from=trade_from)
+    r = out["report"]
+    tr = pd.DataFrame(out["trades"])
+    hold_h = ((pd.to_datetime(tr.closed_at, utc=True) - pd.to_datetime(tr.opened_at, utc=True)).dt.total_seconds()
+              / 3600).median() if len(tr) else 0.0
+    return dict(r, hold_hours_median=float(hold_h))
+
+
+def universe_round(csv_dir: str, symbols, out_dir: str, trade_from: str, balance: float, workers: int | None,
+                   variants: dict[str, list[dict]] | None = None) -> str:
+    """Trend Rider con TODAS las monedas en una cuenta de `balance`: cuántas operaciones por semana salen,
+    cuánto tiempo dura cada una y si sigue ganando después de comisiones."""
+    variants = variants or UNIVERSE_VARIANTS
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    lines = [f"# Más monedas, más operaciones ({pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC)", "",
+             f"Una sola cuenta de {balance:,.0f} USD con {len(symbols)} monedas, Capa 1 → 2 → 3 completa, desde {trade_from}. "
+             "Comisión 0.08% por orden (0.075% = pagando con BNB) + 0.02% de deslizamiento.", ""]
+    for iv, vs in variants.items():
+        avail = [s for s in symbols if (Path(csv_dir) / f"{s}_{iv}.csv").exists()
+                 or (Path(csv_dir) / f"{s}_1h.csv").exists() or (Path(csv_dir) / f"{s}_15m.csv").exists()]
+        data = load(csv_dir, avail, iv)
+        t0 = time.time()
+        with ProcessPoolExecutor(max_workers=workers, initializer=_init_port, initargs=(data,)) as pool:
+            res = list(pool.map(_universe_task, [(v, iv, trade_from, balance) for v in vs]))
+        weeks = (pd.Timestamp(res[0]["period"]["to"]) - pd.Timestamp(res[0]["period"]["from"])).days / 7
+        years = sorted({y for r in res for y in r["by_year"]})
+        lines += [f"## {iv} ({len(avail)} monedas)", "",
+                  "| Variante | Retorno | DD máx | Trades | Por semana | Duración mediana | Acierto | Comisiones | "
+                  "Señales sin capital | " + " | ".join(f"USD {y}" for y in years) + " |",
+                  "|---|---|---|---|---|---|---|---|---|" + "---|" * len(years)]
+        for v, r in zip(vs, res):
+            label = trend_label({k: x for k, x in v.items() if k != "_fee"}) + (" · comisión BNB 0.075%" if "_fee" in v else "")
+            lines.append(f"| {label} | {r['net_return_pct']:+.1f}% | {r['max_drawdown_pct']:.1f}% | {r['trades']} | "
+                         f"{r['trades'] / weeks:.1f} | {r['hold_hours_median']:.0f} h | {r['win_rate_pct'] or 0:.1f}% | "
+                         f"{r['total_fees_usd']:.1f} | {r['skipped_by_capital']} | " +
+                         " | ".join(f"{r['by_year'].get(y, 0):+.1f}" for y in years) + " |")
+        base = res[0]["by_symbol"]
+        lines += ["", f"Resultado por moneda (variante «{trend_label(vs[0])}»):", "",
+                  "| Moneda | Trades | USD |", "|---|---|---|"]
+        for sym, d in sorted(base.items(), key=lambda kv: -kv[1]["pnl_usd"]):
+            lines.append(f"| {sym} | {d['trades']} | {d['pnl_usd']:+.2f} |")
+        lines += ["", f"(tiempo {time.time() - t0:.0f} s)", ""]
+        print(f"[universo] {iv} listo en {time.time() - t0:.0f} s", file=sys.stderr)
+    text = "\n".join(lines)
+    (out / "UNIVERSO.md").write_text(text, encoding="utf-8")
+    return text
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Laboratorio de momentos y estrategias de rebote en temporalidades menores.")
-    ap.add_argument("mode", choices=("download", "explore", "walk", "grid", "fixed", "full", "round2", "round3", "trend"))
+    ap.add_argument("mode", choices=("download", "explore", "walk", "grid", "fixed", "full", "round2", "round3", "trend", "universe"))
     ap.add_argument("--variants", help="trend: JSON {\"4h\": [{...}, ...], \"1h\": [...]} con variantes de Trend Rider")
     ap.add_argument("--base", help="trend/round3: JSON con parámetros que se suman a todas las variantes")
     ap.add_argument("--intervals", default="15m,1h,4h", help="download / full")
@@ -921,6 +995,11 @@ def main(argv=None) -> int:
         return 0
     if a.mode == "round2":
         print(run_round2(a.csv_dir, symbols, a.out_dir, a.trade_from, a.balance, a.workers))
+        return 0
+    if a.mode == "universe":
+        syms = symbols if a.symbols != ",".join(SYMBOLS) else list(WIDE_UNIVERSE)
+        print(universe_round(a.csv_dir, syms, a.out_dir, a.trade_from, a.balance, a.workers,
+                             json.loads(a.variants) if a.variants else None))
         return 0
     if a.mode in ("round3", "trend"):
         variants = json.loads(a.variants) if a.variants else TREND_EXITS
