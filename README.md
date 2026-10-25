@@ -84,7 +84,7 @@ cd /opt/Ingresosbot && sudo bash deploy/install_almalinux.sh
 
 Trend Rider en paralelo (paper, base `data/trend_state.db`, 4h): `sudo systemctl enable --now ingresosbot-trend` (el instalador copia el servicio pero no lo activa).
 
-El instalador crea el usuario de servicio `ingresosbot`, el `.venv` con pandas y numpy, el `.env` (con una `DASHBOARD_ACCESS_KEY` aleatoria) y deja activos `ingresosbot.service` (bot) e `ingresosbot-web.service` (panel). Para publicar el panel con SSL en `https://bot.commonbird.com` sin abrir puertos sigue [deploy/CYBERPANEL_SETUP.md](deploy/CYBERPANEL_SETUP.md). Para actualizar: `sudo git -C /opt/Ingresosbot pull && sudo bash deploy/install_almalinux.sh`.
+El instalador crea el usuario de servicio `ingresosbot`, el `.venv` con pandas y numpy, el `.env` (con una `DASHBOARD_ACCESS_KEY` aleatoria) y deja activos `ingresosbot.service` (bot) e `ingresosbot-web.service` (panel). Para publicar el panel con SSL en `https://bot.commonbird.com` sin abrir puertos sigue [deploy/CYBERPANEL_SETUP.md](deploy/CYBERPANEL_SETUP.md). Para actualizar: `sudo git -C /opt/Ingresosbot pull && sudo bash deploy/install_almalinux.sh`. Para mudarlo a otro VPS (p. ej. de USA a Francia, donde `api.binance.com` responde) sigue [deploy/MIGRAR_VPS.md](deploy/MIGRAR_VPS.md); el instalador también funciona en Ubuntu/Debian.
 
 Toda la configuración vive en `.env` (`BOT_SYMBOLS`, `BOT_INTERVAL`, `BOT_PARAMS`, `WEB_PORT`, alertas...), y la leen tanto el bot como el panel.
 
