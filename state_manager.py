@@ -362,6 +362,14 @@ class StateManager:
             if not k:
                 continue
             peak = pos["trail_peak"] if pos["trail_peak"] is not None else pos["entry_price"]
+            # Trailing ajustado (trend_tight_after_r): con el máximo ya X veces el riesgo inicial a favor.
+            tight_r = getattr(self.p, "trend_tight_after_r", 0.0)
+            if tight_r > 0:
+                risk = abs(pos["entry_price"] - pos["initial_stop_loss"])
+                best = max(peak, h) if pos["side"] == "LONG" else min(peak, l)
+                if risk > 0 and abs(best - pos["entry_price"]) >= tight_r * risk and \
+                        (best - pos["entry_price"]) * (1 if pos["side"] == "LONG" else -1) > 0:
+                    k = min(k, self.p.trend_tight_trail_atr)
             if pos["side"] == "LONG":
                 peak = max(peak, h)
                 new_sl = q.floor_to_step(peak - k * atr_value, self.p.price_tick)

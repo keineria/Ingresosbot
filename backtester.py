@@ -93,6 +93,17 @@ def _max_streak(mask) -> int:
     return best
 
 
+def _bar_step(times: pd.Series) -> pd.Timedelta:
+    d = pd.to_datetime(times, utc=True).diff().dropna()
+    return d.median() if len(d) else pd.Timedelta(hours=1)
+
+
+def _exit_reason(vals: dict, pos: dict, t, step: pd.Timedelta, p: q.Params) -> str | None:
+    """Regla de cierre del perfil "trend" al cierre de la vela t (que empieza en t). bars_held cuenta la vela de entrada."""
+    held = int((pd.Timestamp(t) - pd.Timestamp(pos["opened_at"])) / step) + 1
+    return q.trend_exit_reason(vals, pos["side"], p, pos["entry_price"], held)
+
+
 def run_backtest(df: pd.DataFrame, p: q.Params | None = None, cfg: BacktestConfig | None = None,
                  symbol: str = "BTCUSDT", trade_from=None) -> dict:
     """trade_from: no opera antes de esa fecha (las velas previas solo calientan indicadores, p. ej. la SMA diaria)."""
@@ -124,26 +135,28 @@ def run_backtest(df: pd.DataFrame, p: q.Params | None = None, cfg: BacktestConfi
     stats = {"signals": 0, "signals_blocked_by_halt": 0, "break_even_activations": 0, "trailing_updates": 0,
              "entry_triggers": {}, "decisions": {}, "regimes_when_flat": {}}
 
-    exit_on_filter = trailing and p.trend_exit_on_filter and p.daily_sma_len > 0
-    pending_exit = False
+    signal_exits = q.trend_has_signal_exits(p)
+    step = _bar_step(ind["time"])
+    pending_exit = None
     for i in range(start, len(ind)):
         sm.on_new_bar(times[i])
-        if pending_exit:     # el filtro diario se dio la vuelta al cierre anterior: salida a mercado en la apertura
+        if pending_exit:     # una regla de cierre disparó al cierre anterior: salida a mercado en la apertura
             for pos in sm.positions(symbol):
                 px = o_[i] * ((1 - slip) if pos["side"] == "LONG" else (1 + slip))
-                sm.close_position(pos["id"], px, "SIGNAL_EXIT", times[i])
-            pending_exit = False
+                sm.close_position(pos["id"], px, pending_exit, times[i])
+            pending_exit = None
         for ev in sm.process_candle(symbol, times[i], o_[i], h_[i], l_[i], c_[i], cfg.slippage_pct):
             if ev["event"] == "BREAK_EVEN":
                 stats["break_even_activations"] += 1
         if trailing:
             stats["trailing_updates"] += len(sm.apply_trailing(symbol, times[i], h_[i], l_[i], atr_all[i]))
         equity[i - start] = sm.equity({symbol: c_[i]})
-        if exit_on_filter and i + 1 < len(ind):
+        if signal_exits and i + 1 < len(ind):
             pos_now = sm.positions(symbol)
-            if pos_now and q.trend_exit_signal(dict(zip(cols, vals_all[i])), pos_now[0]["side"], p):
-                pending_exit = True
-                continue
+            if pos_now:
+                pending_exit = _exit_reason(dict(zip(cols, vals_all[i])), pos_now[0], times[i], step, p)
+                if pending_exit:
+                    continue
 
         if sm.positions(symbol) or i + 1 >= len(ind):
             continue
@@ -201,11 +214,20 @@ def run_portfolio_backtest(datasets: dict[str, pd.DataFrame], p: q.Params | None
     times = [t for t in times if tf is None or t >= tf]
     sm = StateManager(":memory:", cfg.initial_balance, p, cfg.fee_pct)
     pending: list[tuple[str, dict]] = []
+    pending_exits: dict[str, str] = {}
+    signal_exits = q.trend_has_signal_exits(p)
+    step = min(_bar_step(d.index.to_series()) for d in ind.values())
     stats = {"signals": 0, "skipped_by_capital": 0}
     equity, last_close = [], {}
     for t in times:
         sm.on_new_bar(t)
         bars = {s: d.loc[t] for s, d in ind.items() if t in d.index}
+        for s, reason in pending_exits.items():         # cierres por regla, a la apertura de esta vela
+            if s in bars:
+                for pos in sm.positions(s):
+                    o = float(bars[s]["open"])
+                    sm.close_position(pos["id"], o * ((1 - slip) if pos["side"] == "LONG" else (1 + slip)), reason, t)
+        pending_exits = {}
         for s, vals in pending:                     # entradas de la vela anterior, a la apertura de esta
             if s not in bars or sm.positions(s):
                 continue
@@ -227,8 +249,14 @@ def run_portfolio_backtest(datasets: dict[str, pd.DataFrame], p: q.Params | None
                 sm.apply_trailing(s, t, float(b["high"]), float(b["low"]), float(b["atr14"]))
             last_close[s] = float(b["close"])
         equity.append(sm.equity(last_close))
+        if signal_exits:
+            for s, b in bars.items():
+                for pos in sm.positions(s):
+                    reason = _exit_reason({k: float(b[k]) for k in cols}, pos, t, step, p)
+                    if reason:
+                        pending_exits[s] = reason
         for s, b in bars.items():
-            if sm.positions(s) or s not in first_ok or t < first_ok[s]:
+            if sm.positions(s) or s in pending_exits or s not in first_ok or t < first_ok[s]:
                 continue
             vals = {k: float(b[k]) for k in cols}
             if any(np.isnan(v) for v in vals.values()) or vals["atr14"] <= 0:
