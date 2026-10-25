@@ -1,0 +1,23 @@
+# systemd: agentes de IA (vigía de noticias, auditor, resumen diario y botones de Telegram). Solo asesoran:
+# no tienen claves del exchange ni pueden abrir operaciones. Guía completa: docs/AGENTES_IA.md
+# deploy/install_almalinux.sh lo copia pero no lo activa. Para encenderlo (después de poner la clave en .env):
+#   sudo systemctl enable --now ingresosbot-ai
+#   journalctl -u ingresosbot-ai -f            # ver el log en vivo
+[Unit]
+Description=Ingresosbot agentes de IA (asesores, nunca operan)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ingresosbot
+Group=ingresosbot
+WorkingDirectory=/opt/Ingresosbot
+ExecStart=/opt/Ingresosbot/.venv/bin/python ai_agents.py run --env-file .env --log-file logs/ai.log
+Restart=always
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

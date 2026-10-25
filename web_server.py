@@ -24,6 +24,8 @@ Endpoints:
                          total en USD y permisos de la llave. Sin BINANCE_API_KEY en .env responde configured=false
   POST /api/scan-now     diagnóstico de las 3 capas en cada par configurado (no abre órdenes)
   POST /api/kill-switch  {"action": "halt" | "resume" | "toggle", "reason": "..."}
+  GET  /api/ai           agentes de IA: gasto del mes, pausa activa, sugerencias pendientes, últimas decisiones
+  POST /api/ai/decide    {"kind": "pause" | "hypothesis" | "permission", "id": N, "action": "on" | "no" | "off" | "ok"}
 
 Uso:
   python web_server.py                      # lee .env
@@ -358,6 +360,40 @@ class DashboardApp:
             self._scan_lock.release()
 
     # ── POST /api/kill-switch ───────────────────────────────────────────────
+    # ── Agentes de IA (ai_agents.py) ───────────────────────────────────────
+    def _ai_service(self):
+        import ai_agents
+        from ai_core import AIConfig
+        if getattr(self, "_ai_svc", None) is None:
+            self._ai_svc = ai_agents.AgentService(AIConfig.from_env(), ai_agents.AgentSettings.from_env(),
+                                                  clock=self.clock, run_lab_in_thread=False)
+        return self._ai_svc
+
+    def ai_state(self) -> dict:
+        from ai_core import AIConfig
+        cfg = AIConfig.from_env()
+        if not cfg.enabled and not Path(cfg.db_path).exists():
+            return {"enabled": False}
+        import ai_agents
+        svc = self._ai_service()
+        return ai_agents.ai_summary(svc.store, cfg, svc.s, svc.now())
+
+    def ai_decide(self, body: dict, source: str = "api") -> dict:
+        kind = {"pause": "p", "hypothesis": "h", "permission": "a"}.get(str(body.get("kind", "")))
+        action = str(body.get("action", ""))
+        try:
+            item = int(body.get("id"))
+        except (TypeError, ValueError):
+            item = None
+        allowed = {"p": {"on", "no", "off"}, "h": {"ok", "no"}, "a": {"on", "off"}}
+        if kind is None or item is None or action not in allowed[kind]:
+            raise ApiError(HTTPStatus.BAD_REQUEST,
+                           'usa {"kind": "pause"|"hypothesis"|"permission", "id": N, "action": ...}')
+        with self._db_lock:
+            msg = self._ai_service().decide(kind, item, action, by=source)
+        log.warning("IA: %s #%s %s por %s -> %s", body.get("kind"), item, action, source, msg)
+        return {"ok": True, "message": msg}
+
     def kill_switch(self, body: dict, source: str = "api") -> dict:
         action = str(body.get("action", "toggle")).lower()
         if action not in ("halt", "resume", "toggle"):
@@ -558,6 +594,9 @@ def make_handler(app: DashboardApp | BotRegistry, binance: AccountView | None = 
                 elif path == "/api/state":
                     if self._authorized(allow_query=True):
                         self._json(HTTPStatus.OK, self._bot().state())
+                elif path == "/api/ai":                    # la IA es una sola para todos los bots
+                    if self._authorized(allow_query=True):
+                        self._json(HTTPStatus.OK, registry.get(None).ai_state())
                 elif path == "/api/bots":
                     if self._authorized(allow_query=True):
                         self._json(HTTPStatus.OK, registry.bots())
@@ -578,7 +617,7 @@ def make_handler(app: DashboardApp | BotRegistry, binance: AccountView | None = 
         def do_POST(self):
             path = urlsplit(self.path).path
             try:
-                if path not in ("/api/scan-now", "/api/kill-switch"):
+                if path not in ("/api/scan-now", "/api/kill-switch", "/api/ai/decide"):
                     self._json(HTTPStatus.NOT_FOUND, {"error": "no encontrado"})
                     return
                 if not self._authorized(allow_query=False):   # en POST solo cabecera (evita CSRF por URL)
@@ -587,6 +626,8 @@ def make_handler(app: DashboardApp | BotRegistry, binance: AccountView | None = 
                 bot = self._bot(body)
                 if path == "/api/scan-now":
                     self._json(HTTPStatus.OK, bot.scan_now())
+                elif path == "/api/ai/decide":
+                    self._json(HTTPStatus.OK, registry.get(None).ai_decide(body, source=f"web:{self._source()}"))
                 else:
                     self._json(HTTPStatus.OK, bot.kill_switch(body, source=f"web:{self._source()}"))
             except ApiError as exc:

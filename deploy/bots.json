@@ -2,7 +2,7 @@
   {
     "id": "oficial",
     "name": "Bot Oficial",
-    "trader": "Juan",
+    "trader": "Nathalia",
     "service": "ingresosbot",
     "db": "data/trading_state.db",
     "interval": null,
@@ -38,7 +38,7 @@
   {
     "id": "tortuga",
     "name": "Tortuga 55",
-    "trader": "Óscar",
+    "trader": "Celeste",
     "service": "ingresosbot-tortuga",
     "db": "data/tortuga_state.db",
     "interval": "1d",
