@@ -799,5 +799,31 @@ class TestBotCoverage(unittest.TestCase):
             self.assertIsNotNone(gate.store)            # la pausa del vigía sigue aplicando a todos
 
 
+class TestBotSwitchedOff(unittest.TestCase):
+    """Un bot apagado desde el panel: su laboratorio deja de pedir votos a la IA."""
+
+    def test_lab_does_not_vote_for_switched_off_bot(self):
+        from state_manager import StateManager
+        with tempfile.TemporaryDirectory() as tmp:
+            real = str(Path(tmp) / "trend_state.db")
+            with StateManager(real, 500) as sm:
+                pass
+            settings = ag.AgentSettings(bots=ag.parse_bots(f"{real}|deploy/trend_params.json|4h"), lab=True)
+            prof = settings.profiles()["trend_params_4h"]
+            self.assertFalse(ag.profile_off(prof))
+            with StateManager(real, 500) as sm:
+                sm.set_manual_halt(True, "Apagado desde el panel", "test")
+            self.assertTrue(ag.bot_off(real) and ag.profile_off(prof))
+            store = AIStore(str(Path(tmp) / "ai.db"))
+            client = AIClient(AIConfig(enabled=True, anthropic_key="x"), store, clock=Clock(NOW))
+            client.providers = [FakeProvider("anthropic", [])]       # si votara, fallaría: no quedan respuestas
+            gate = ag.AIGate("trend_params_4h", store, client, "escalera", None, Clock(NOW), "4h",
+                             profile="trend_params_4h", settings=settings, lab=True)
+            out = gate.review_signal("BTCUSDT", "4h", {}, BULL, NOW.isoformat())
+            self.assertEqual((out["allow"], out["vote"], out["reason"]), (True, None, "bot apagado: la IA no vota"))
+            self.assertEqual(store.decisions(limit=5), [])
+            self.assertFalse(ag.bot_off(str(Path(tmp) / "no_existe.db")))
+
+
 if __name__ == "__main__":
     unittest.main()

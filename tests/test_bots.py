@@ -180,6 +180,42 @@ class TestMultiBotPanel(unittest.TestCase):
         self.assertIn("breakout_close_gt_max55", l2["breakout_long_checks"])
 
 
+    def test_power_off_with_close_positions(self):
+        """Botón "Apagar" de la tarjeta: para las entradas y, si se pide, el propio bot cierra todo al precio actual."""
+        db = self.bots[1]["db"]
+        with StateManager(db, 500, fee_pct=0) as sm:
+            sm.open_position("BTCUSDT", "LONG", 100.0, 95.0, 0, 0, 0, 1.0, 5.0, "2026-10-20T00:00:00+00:00")
+        status, r = self.call("/api/kill-switch?bot=tortuga", "POST",
+                              {"action": "halt", "power": True, "close_positions": True})
+        self.assertEqual((status, r["account"]["manual_halt"], r["close_requested"], r["power"]), (200, True, 1, True))
+        with StateManager(db, 500, fee_pct=0) as sm:
+            self.assertEqual(sm.positions()[0]["symbol"], "BTCUSDT")      # el panel no cierra: lo pide
+            self.assertEqual(sm.control_log(1)[0]["action"], "CLOSE_ALL_REQUESTED")
+        cfg, params = bot_settings(self.bots[1])
+        bot = BotRunner(cfg, params, notifier=Notifier(), candle_source=lambda s, i, n: daily_breakout(),
+                        price_source=lambda s: 123.0)
+        events = bot.watch_cycle()
+        self.assertEqual([(e["event"], e["exit_reason"], e["exit_price"]) for e in events],
+                         [("CLOSE", "MANUAL_CLOSE", 123.0)])
+        self.assertEqual(bot.sm.positions(), [])
+        self.assertIsNone(bot.sm.close_all_request())                    # pedido cumplido: no se repite
+        self.assertTrue(bot.sm.account()["manual_halt"])
+        bot.close()
+
+    def test_power_off_keeps_positions_by_default(self):
+        db = self.bots[1]["db"]
+        with StateManager(db, 500, fee_pct=0) as sm:
+            sm.open_position("BTCUSDT", "LONG", 100.0, 95.0, 0, 0, 0, 1.0, 5.0, "2026-10-20T00:00:00+00:00")
+        r = self.call("/api/kill-switch?bot=tortuga", "POST", {"action": "halt", "power": True})[1]
+        self.assertNotIn("close_requested", r)
+        self.assertEqual(r["open_positions"], 1)
+        with StateManager(db, 500, fee_pct=0) as sm:
+            self.assertIsNone(sm.close_all_request())
+            self.assertEqual(sm.control_log(1)[0]["reason"], "Apagado desde el panel")
+        self.call("/api/kill-switch?bot=tortuga", "POST", {"action": "resume", "power": True})
+        self.assertFalse(self.call("/api/state?bot=tortuga")[1]["account"]["manual_halt"])
+
+
 class TestLiveOverview(unittest.TestCase):
     """GET /api/overview: los bots en vivo a la vez, y bots.json que se recarga solo."""
 

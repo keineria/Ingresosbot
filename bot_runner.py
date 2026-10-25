@@ -295,9 +295,30 @@ class BotRunner:
             events.append(ev)
         return events
 
+    def _apply_close_all(self, at: str) -> list[dict]:
+        """Al apagar el bot desde el panel con "cerrar ya": cierra todas sus posiciones al precio actual."""
+        req = self.sm.close_all_request()
+        if req is None:
+            return []
+        events, pending = [], 0
+        for pos in self.sm.positions():
+            try:
+                price = float(self.price_source(pos["symbol"]))
+            except Exception as exc:
+                log.warning("Cierre manual: sin precio para %s (%s); se reintenta", pos["symbol"], exc)
+                pending += 1
+                continue
+            ev = {"event": "CLOSE", **self.sm.close_position(pos["id"], price, "MANUAL_CLOSE", at)}
+            log.info("Cierre manual pedido desde el panel: %s @ %.4f", pos["symbol"], price)
+            self._handle_events([ev])
+            events.append(ev)
+        if not pending:
+            self.sm.cancel_close_all()
+        return events
+
     def watch_cycle(self, now_s: float | None = None) -> list[dict]:
         at = pd.Timestamp((self.clock() if now_s is None else now_s), unit="s", tz="UTC").isoformat()
-        events: list[dict] = self._apply_ai_exits(at)
+        events: list[dict] = self._apply_close_all(at) + self._apply_ai_exits(at)
         for symbol in sorted({p["symbol"] for p in self.sm.positions()}):
             try:
                 price = float(self.price_source(symbol))
