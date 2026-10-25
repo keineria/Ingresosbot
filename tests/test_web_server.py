@@ -78,6 +78,7 @@ class WebServerTest(unittest.TestCase):
         status, html = self.call("/", key=None)
         self.assertEqual(status, 200)
         self.assertIn("Kill Switch", html)
+        self.assertNotIn("https://", html.split("<body>")[0])        # sin CDN: todo va dentro del panel
         self.assertEqual(self.call("/no-existe")[0], 404)
         with self.assertRaises(ValueError):
             ws.DashboardApp(self.cfg, q.Params(), "")
@@ -107,6 +108,22 @@ class WebServerTest(unittest.TestCase):
         self.assertEqual((s["metrics"]["trades"], s["metrics"]["win_rate_pct"]), (1, 100.0))
         self.assertEqual(s["config"]["symbols"], ["BTCUSDT", "ETHUSDT"])
 
+    def test_state_periods_curve_and_market(self):
+        # Reloj fijo: miércoles 2026-01-21 15:00 UTC -> semana desde el lunes 19, mes desde el 1.
+        self.app.clock = lambda: 1769007600.0
+        with StateManager(self.db, 10000, fee_pct=0) as sm:
+            for closed_at, exit_price in (("2025-12-31T10:00:00+00:00", 101.0), ("2026-01-05T10:00:00+00:00", 99.0),
+                                          ("2026-01-20T10:00:00+00:00", 102.0), ("2026-01-21T09:00:00+00:00", 103.0)):
+                pid = sm.open_position("BTCUSDT", "LONG", 100.0, 98.0, 110.0, 103.0, 100.2, 10.0, 20.0, "x")
+                sm.close_position(pid, exit_price, "MANUAL", closed_at)
+        s = self.call("/api/state")[1]
+        self.assertEqual(s["periods"]["today"], {"pnl_usd": 30.0, "trades": 1, "since": "2026-01-21T00:00:00+00:00"})
+        self.assertEqual(s["periods"]["week"]["pnl_usd"], 50.0)
+        self.assertEqual(s["periods"]["week"]["since"], "2026-01-19T00:00:00+00:00")
+        self.assertEqual((s["periods"]["month"]["pnl_usd"], s["periods"]["month"]["trades"]), (40.0, 3))
+        self.assertEqual([p["balance"] for p in s["balance_curve"]], [10010.0, 10000.0, 10020.0, 10050.0])
+        self.assertEqual(s["market"], {"BTCUSDT": {"price": 72600.0}, "ETHUSDT": {"price": 3000.0}})
+
     def test_state_without_price_still_works(self):
         with StateManager(self.db, 10000) as sm:
             sm.open_position("BTCUSDT", "LONG", 72500.0, 71570.0, 74590.0, 73370.0, 72645.0, 0.1, 93.0, "x")
@@ -128,6 +145,7 @@ class WebServerTest(unittest.TestCase):
         self.assertEqual(btc["layer_3"]["stop_loss"], 71622.73)
         self.assertEqual(eth["decision"], "WAIT / NO_TRADE")
         self.assertTrue(eth["layer_2"]["blocking_filters"])
+        self.assertEqual(btc["closes"], [round(float(c), 8) for c in BULL["close"].tail(48)])   # minigráfico
         with StateManager(self.db, 10000) as sm:
             self.assertEqual(sm.positions(), [])           # no abre órdenes
         self.assertEqual(self.call("/api/state")[1]["last_scan"]["symbols"]["BTCUSDT"]["decision"], "LONG")
