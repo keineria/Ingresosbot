@@ -17,6 +17,7 @@ WorkingDirectory=/opt/Ingresosbot
 Environment=BOT_DB=data/trend_state.db
 Environment=BOT_INTERVAL=4h
 Environment=BOT_PARAMS=deploy/trend_params.json
+Environment=BOT_BALANCE=500
 ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --env-file .env --log-file logs/bot-trend.log
 Restart=always
 RestartSec=10

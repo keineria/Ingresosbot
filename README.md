@@ -11,7 +11,7 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | 2 | market-regime-quant | [SKILL_1](skills/SKILL_1_market_regime_quant.md) | Régimen y señal LONG / SHORT / WAIT |
 | 3 | atr-risk-guardian | [SKILL_2](skills/SKILL_2_atr_risk_guardian.md) | SL, TP, Break-Even y tamaño |
 
-**Perfil paralelo Trend Rider** ([SKILL_4](skills/SKILL_4_trend_rider.md), `--params '{"strategy": "trend"}'`): misma Capa 1; entra por ruptura del máximo de 20 velas sobre la EMA200 y sale con trailing stop a 4 ATR, sin TP fijo ni Break-Even. Las reglas oficiales siguen siendo el valor por defecto. Investigación, validación y cómo correrlo al lado del oficial: [docs/TREND_RIDER.md](docs/TREND_RIDER.md).
+**Perfil paralelo Trend Rider** ([SKILL_4](skills/SKILL_4_trend_rider.md), `--params '{"strategy": "trend"}'`): misma Capa 1; entra por ruptura del máximo de 20 velas sobre la EMA200 y sale con trailing stop a 4 ATR, sin TP fijo ni Break-Even. Las reglas oficiales siguen siendo el valor por defecto. Investigación, validación y cómo correrlo al lado del oficial: [docs/TREND_RIDER.md](docs/TREND_RIDER.md). Resultados con datos de 2024-2026 y 500 USD: [docs/LAB_2024_2026.md](docs/LAB_2024_2026.md).
 
 ## Módulos
 
@@ -20,7 +20,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `quant_core_engine.py` | Motor de 3 capas: indicadores, régimen, riesgo y JSON de la orden |
 | `state_manager.py` | Estado persistente en SQLite (`data/trading_state.db`): cuenta, posiciones abiertas, historial; Break-Even automático |
 | `market_fetcher.py` | Velas públicas sin API key: data-api.binance.vision → Binance → Bybit → CSV local (`data/candles/`) |
-| `backtester.py` | Backtest vela a vela con engine + state_manager, comisión 0.08% por orden |
+| `backtester.py` | Backtest vela a vela con engine + state_manager, comisión 0.08% por orden; `--portfolio` = varios pares con una sola cuenta |
+| `strategy_lab.py` | Walk-forward: elige parámetros con el pasado, los mide en meses que no vio y guarda cada orden simulada en SQLite |
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
 | `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
 | `web_server.py` + `static/index.html` | Panel dark mode y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`) en 127.0.0.1:8050 |

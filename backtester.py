@@ -94,7 +94,8 @@ def _max_streak(mask) -> int:
 
 
 def run_backtest(df: pd.DataFrame, p: q.Params | None = None, cfg: BacktestConfig | None = None,
-                 symbol: str = "BTCUSDT") -> dict:
+                 symbol: str = "BTCUSDT", trade_from=None) -> dict:
+    """trade_from: no opera antes de esa fecha (las velas previas solo calientan indicadores, p. ej. la SMA diaria)."""
     p = p or q.Params()
     cfg = cfg or BacktestConfig()
     if len(df) < p.min_candles + 2:
@@ -113,18 +114,36 @@ def run_backtest(df: pd.DataFrame, p: q.Params | None = None, cfg: BacktestConfi
 
     sm = StateManager(cfg.db_path, cfg.initial_balance, p, cfg.fee_pct)
     start = p.min_candles - 1
+    if trade_from is not None:
+        tf = pd.Timestamp(trade_from)
+        tf = tf.tz_localize("UTC") if tf.tzinfo is None else tf
+        start = max(start, int((ind["time"] < tf).sum()))
+        if start >= len(ind) - 1:
+            raise ValueError("No hay velas para operar después de trade_from.")
     equity = np.full(len(ind) - start, np.nan)
     stats = {"signals": 0, "signals_blocked_by_halt": 0, "break_even_activations": 0, "trailing_updates": 0,
              "entry_triggers": {}, "decisions": {}, "regimes_when_flat": {}}
 
+    exit_on_filter = trailing and p.trend_exit_on_filter and p.daily_sma_len > 0
+    pending_exit = False
     for i in range(start, len(ind)):
         sm.on_new_bar(times[i])
+        if pending_exit:     # el filtro diario se dio la vuelta al cierre anterior: salida a mercado en la apertura
+            for pos in sm.positions(symbol):
+                px = o_[i] * ((1 - slip) if pos["side"] == "LONG" else (1 + slip))
+                sm.close_position(pos["id"], px, "SIGNAL_EXIT", times[i])
+            pending_exit = False
         for ev in sm.process_candle(symbol, times[i], o_[i], h_[i], l_[i], c_[i], cfg.slippage_pct):
             if ev["event"] == "BREAK_EVEN":
                 stats["break_even_activations"] += 1
         if trailing:
             stats["trailing_updates"] += len(sm.apply_trailing(symbol, times[i], h_[i], l_[i], atr_all[i]))
         equity[i - start] = sm.equity({symbol: c_[i]})
+        if exit_on_filter and i + 1 < len(ind):
+            pos_now = sm.positions(symbol)
+            if pos_now and q.trend_exit_signal(dict(zip(cols, vals_all[i])), pos_now[0]["side"], p):
+                pending_exit = True
+                continue
 
         if sm.positions(symbol) or i + 1 >= len(ind):
             continue
@@ -161,6 +180,87 @@ def run_backtest(df: pd.DataFrame, p: q.Params | None = None, cfg: BacktestConfi
     trades = sm.trades()
     sm.close()
     return {"report": report, "trades": trades}
+
+
+def run_portfolio_backtest(datasets: dict[str, pd.DataFrame], p: q.Params | None = None,
+                           cfg: BacktestConfig | None = None, trade_from=None) -> dict:
+    """Varios pares con UNA sola cuenta, como bot_runner.py: el mismo Circuit Breaker para todos, una posición
+    por par y nunca más de 85% × max_leverage del balance comprometido entre todos (si no cabe: SKIPPED).
+    La señal se toma al cierre de la vela t y se entra en la apertura de t+1 (en el orden de `datasets`)."""
+    p = p or q.Params()
+    cfg = cfg or BacktestConfig()
+    slip = cfg.slippage_pct / 100.0
+    cols = q.INDICATOR_KEYS
+    ind = {s: q.compute_indicators(df, p).set_index("time") for s, df in datasets.items()}
+    times = sorted(set().union(*(set(d.index) for d in ind.values())))
+    first_ok = {s: d.index[p.min_candles - 1] for s, d in ind.items() if len(d) >= p.min_candles + 2}
+    tf = None
+    if trade_from is not None:
+        tf = pd.Timestamp(trade_from)
+        tf = tf.tz_localize("UTC") if tf.tzinfo is None else tf
+    times = [t for t in times if tf is None or t >= tf]
+    sm = StateManager(":memory:", cfg.initial_balance, p, cfg.fee_pct)
+    pending: list[tuple[str, dict]] = []
+    stats = {"signals": 0, "skipped_by_capital": 0}
+    equity, last_close = [], {}
+    for t in times:
+        sm.on_new_bar(t)
+        bars = {s: d.loc[t] for s, d in ind.items() if t in d.index}
+        for s, vals in pending:                     # entradas de la vela anterior, a la apertura de esta
+            if s not in bars or sm.positions(s):
+                continue
+            o = float(bars[s]["open"])
+            d = 1 if q.evaluate_layer2(vals, p)["signal"] == "LONG" else -1
+            r = q.run_engine(sm.engine_account(), manual=vals, symbol=s, entry_price=o * (1 + slip * d), params=p)
+            if r["decision"] not in ("LONG", "SHORT"):
+                continue
+            cap = sm.account()["balance"] * p.max_allocation_pct / 100.0 * p.max_leverage
+            if sm.open_notional() + r["order"]["notional_usd"] > cap + 0.01:
+                stats["skipped_by_capital"] += 1
+                continue
+            sm.open_from_engine(r, opened_at=t)
+        pending = []
+        for s, b in bars.items():
+            sm.process_candle(s, t, float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"]),
+                              cfg.slippage_pct)
+            if p.strategy == "trend":
+                sm.apply_trailing(s, t, float(b["high"]), float(b["low"]), float(b["atr14"]))
+            last_close[s] = float(b["close"])
+        equity.append(sm.equity(last_close))
+        for s, b in bars.items():
+            if sm.positions(s) or s not in first_ok or t < first_ok[s]:
+                continue
+            vals = {k: float(b[k]) for k in cols}
+            if any(np.isnan(v) for v in vals.values()) or vals["atr14"] <= 0:
+                continue
+            r = q.run_engine(sm.engine_account(), manual=vals, symbol=s, params=p)
+            if r["decision"] in ("LONG", "SHORT"):
+                stats["signals"] += 1
+                pending.append((s, vals))
+    for pos in sm.positions():
+        sm.close_position(pos["id"], last_close[pos["symbol"]], "END_OF_DATA", times[-1])
+    tdf = pd.DataFrame(sm.trades())
+    n = len(tdf)
+    final = sm.account()["balance"]
+    eq = np.array(equity + [final])
+    gw = float(tdf.pnl_usd[tdf.pnl_usd > 0].sum()) if n else 0.0
+    gl = float(-tdf.pnl_usd[tdf.pnl_usd < 0].sum()) if n else 0.0
+    rep = {"symbols": list(datasets), "period": {"from": str(times[0]), "to": str(times[-1])},
+           "strategy": p.strategy, "initial_balance": cfg.initial_balance, "final_balance": round(final, 2),
+           "net_return_pct": round((final / cfg.initial_balance - 1) * 100, 2),
+           "max_drawdown_pct": round(_max_drawdown_pct(eq), 2), "trades": n,
+           "win_rate_pct": round(float((tdf.result == "WIN").mean() * 100), 2) if n else None,
+           "profit_factor": round(gw / gl, 3) if gl > 0 else None,
+           "total_fees_usd": round(float(tdf.fees_usd.sum()), 2) if n else 0.0,
+           "halted_activations": sum(1 for x in sm.status_transitions if x["to"] == "HALTED"),
+           "signals": stats["signals"], "skipped_by_capital": stats["skipped_by_capital"],
+           "by_symbol": ({k: {"trades": int(len(g)), "pnl_usd": round(float(g.pnl_usd.sum()), 2)}
+                          for k, g in tdf.groupby("symbol")} if n else {}),
+           "by_year": ({k: round(float(g.pnl_usd.sum()), 2) for k, g in
+                        tdf.groupby(pd.to_datetime(tdf.closed_at, utc=True).dt.year.astype(str))} if n else {})}
+    trades = sm.trades()
+    sm.close()
+    return {"report": q._clean(rep), "trades": trades}
 
 
 def _report(ind, times, start, sm, equity, stats, cfg, p, symbol) -> dict:
@@ -280,7 +380,8 @@ def _params_for(base: q.Params, combo: dict) -> q.Params:
 
 _TREND_LABELS = {"donchian_len": "Donchian {:g}", "trend_sl_atr_mult": "SL inicial {:g} ATR",
                  "trail_atr_mult": "trailing {:g} ATR"}
-_ENTRY_LABELS = {"breakout": "ruptura", "pullback": "retroceso oficial", "both": "ruptura o retroceso"}
+_ENTRY_LABELS = {"breakout": "ruptura", "pullback": "retroceso oficial", "both": "ruptura o retroceso",
+                 "daily_filter": "solo filtro diario"}
 
 
 def combo_label(combo: dict) -> str:
@@ -292,6 +393,10 @@ def combo_label(combo: dict) -> str:
             parts.append("entrada " + _ENTRY_LABELS.get(v, str(v)))
         elif k in _TREND_LABELS:
             parts.append(_TREND_LABELS[k].format(v))
+        elif k == "daily_sma_len":
+            parts.append(f"filtro diario SMA{v:g}" if v else "sin filtro diario")
+        elif k == "trend_exit_on_filter":
+            parts.append("sale si el filtro cae" if v else "sale solo por trailing")
         elif k in ("allow_short", "trend_allow_short"):
             parts.append("con cortos" if v else "solo largos")
         elif k == "be_atr_mult":
@@ -336,7 +441,10 @@ def run_sweep(datasets: dict[tuple[str, str], pd.DataFrame], grid: dict[str, lis
         for combo in combos:
             p = _params_for(base, combo)
             tr = _brief(run_backtest(train, p, cfg, symbol)["report"])
-            te = _brief(run_backtest(test, p, cfg, symbol)["report"])
+            if p.daily_sma_len > 0:   # la SMA diaria necesita meses de historia previa: se calienta con todo el pasado
+                te = _brief(run_backtest(df, p, cfg, symbol, trade_from=df.time.iloc[int(len(df) * train_frac)])["report"])
+            else:
+                te = _brief(run_backtest(test, p, cfg, symbol)["report"])
             rows.append({"symbol": symbol, "interval": interval, "variant": combo_label(combo),
                          "official": all(getattr(official, a) == b for a, b in combo.items()), **combo,
                          **{f"train_{a}": b for a, b in tr.items()}, **{f"test_{a}": b for a, b in te.items()}})
@@ -412,6 +520,9 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--csv", help="CSV OHLCV histórico")
     src.add_argument("--symbol", help="Descarga velas públicas (BTCUSDT, ETHUSDT, SOLUSDT...)")
     src.add_argument("--sweep", metavar="SYMBOLS", help="Modo comparativo: pares separados por coma")
+    src.add_argument("--portfolio", metavar="SYMBOLS",
+                     help="Varios pares con UNA cuenta (como el bot 24/7): BTCUSDT,ETHUSDT,SOLUSDT")
+    ap.add_argument("--trade-from", help="Fecha desde la que se opera (lo anterior solo calienta indicadores)")
     ap.add_argument("--interval", default="1h")
     ap.add_argument("--intervals", default="1h,4h,1d", help="Temporalidades del modo comparativo")
     ap.add_argument("--grid", help="Modo comparativo: 'default', 'trend' (Trend Rider contra el oficial), "
@@ -470,6 +581,21 @@ def main(argv: list[str] | None = None) -> int:
         print(md)
         return 0
 
+    if args.portfolio:
+        from market_fetcher import fetch_candles
+        data = {}
+        for sym in [x.strip().upper() for x in args.portfolio.split(",") if x.strip()]:
+            data[sym], info = fetch_candles(sym, args.interval, args.limit or 6000, verbose=True)
+            print(f"[backtester] {sym}: {info['candles']} velas desde {info['source']}", file=sys.stderr)
+        out = run_portfolio_backtest(data, p, BacktestConfig(args.balance, args.fee, args.slippage), args.trade_from)
+        js = json.dumps(out["report"], ensure_ascii=False, indent=2, allow_nan=False)
+        if args.trades_out:
+            pd.DataFrame(out["trades"]).to_csv(args.trades_out, index=False)
+        if args.out_json:
+            Path(args.out_json).write_text(js, encoding="utf-8")
+        print(js)
+        return 0
+
     if args.csv:
         df, symbol = q.load_csv(args.csv), Path(args.csv).stem.split("_")[0].upper()
     else:
@@ -478,7 +604,7 @@ def main(argv: list[str] | None = None) -> int:
         symbol = args.symbol.upper()
         print(f"[backtester] velas: {info['candles']} desde {info['source']}", file=sys.stderr)
 
-    out = run_backtest(df, p, BacktestConfig(args.balance, args.fee, args.slippage, args.db), symbol)
+    out = run_backtest(df, p, BacktestConfig(args.balance, args.fee, args.slippage, args.db), symbol, args.trade_from)
     rep = out["report"]
     js = json.dumps(rep, ensure_ascii=False, indent=2, allow_nan=False)
     md = f"# Backtest {rep['symbol']}\n\n{markdown_report(rep)}\n\n```json\n{js}\n```\n"

@@ -1,5 +1,7 @@
 # Trend Rider: la versión paralela del bot
 
+> **Actualización con datos actuales (2024-2026, 500 USD):** ver [LAB_2024_2026.md](LAB_2024_2026.md). Trend Rider ganó en 20 de 20 grupos de pares y el oficial perdió en 18 de 20. `deploy/trend_params.json` ya trae la configuración ganadora: SL 2 ATR, trailing 5 ATR y filtro SMA200 diaria.
+
 Trend Rider es un segundo perfil del mismo motor (`Params.strategy = "trend"`). La regla completa está en [SKILL_4](../skills/SKILL_4_trend_rider.md). Se puede probar y correr **al lado** del bot oficial sin tocarlo: el oficial sigue igual, con su base, su panel y sus reglas.
 
 ## 1. La idea en una frase

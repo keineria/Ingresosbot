@@ -78,6 +78,8 @@ class BotRunner:
         self.price_source = price_source or (lambda s: fetch_price(s)[0])
         self.clock, self.sleep = clock, sleep
         self.step = INTERVAL_MS[cfg.interval]
+        if self.p.daily_sma_len > 0:      # el filtro diario necesita N días completos de velas
+            cfg.candles_limit = max(cfg.candles_limit, (self.p.daily_sma_len + 3) * (86_400_000 // self.step))
         self.max_price_gap = cfg.max_price_gap_pct / 100.0
         self.sm = StateManager(cfg.db_path, cfg.initial_balance, self.p, cfg.fee_pct)
         self._seen_transitions = 0
@@ -167,9 +169,18 @@ class BotRunner:
                                                        float(last["close"])))
         # Trailing stop (perfil "trend"): con la vela ya cerrada; rige desde la siguiente.
         if any(p.get("trail_atr_mult") for p in in_bar) and self.sm.positions(symbol):
-            atr_now = float(q.compute_indicators(df, self.p)["atr14"].iloc[-1])
+            ind_last = q.compute_indicators(df, self.p).iloc[-1]
             self._handle_events(self.sm.apply_trailing(symbol, last["time"], float(last["high"]),
-                                                       float(last["low"]), atr_now))
+                                                       float(last["low"]), float(ind_last["atr14"])))
+            # Filtro diario dado la vuelta (trend_exit_on_filter): salida a mercado.
+            for pos in self.sm.positions(symbol):
+                if q.trend_exit_signal({k: float(ind_last[k]) for k in q.INDICATOR_KEYS}, pos["side"], self.p):
+                    try:
+                        px = float(self.price_source(symbol))
+                    except Exception:
+                        px = float(last["close"])
+                    ev = self.sm.close_position(pos["id"], px, "SIGNAL_EXIT", bar_close_iso)
+                    self._handle_events([{"event": "CLOSE", **ev}])
         self._flush_status_alerts()
 
         if self.sm.positions(symbol):

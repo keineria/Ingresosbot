@@ -169,6 +169,77 @@ class TestTrendBacktestAndSweep(unittest.TestCase):
         self.assertIn("**Oficial** (oficial)", bt.markdown_sweep(rows))
 
 
+class TestDailyFilter(unittest.TestCase):
+    def test_daily_trend_uses_only_closed_days(self):
+        df = q.demo_bull_trend(24 * 12, seed=5)
+        p = q.Params(strategy="trend", daily_sma_len=3)
+        ind = q.compute_indicators(df, p)
+        day = ind.time.dt.floor("D")
+        closes = df.close.groupby(day.values).last()
+        expect = (closes - closes.rolling(3).mean()).apply(lambda v: 0.0 if pd.isna(v) else float(v > 0) - float(v < 0))
+        expect = expect.shift(1).fillna(0.0)
+        for d, v in expect.items():
+            got = ind.daily_trend[day == pd.Timestamp(d, tz="UTC")].unique()
+            self.assertEqual(list(got), [v])                 # el mismo valor todo el día, el del día anterior
+        # Cambiar el futuro no cambia el pasado.
+        mod = df.copy()
+        mod.loc[mod.index[-30:], "close"] *= 0.5
+        self.assertTrue((q.compute_indicators(mod, p).daily_trend.iloc[:-30].values
+                         == ind.daily_trend.iloc[:-30].values).all())
+        self.assertEqual(set(q.compute_indicators(df, q.Params()).daily_trend), {0.0})   # apagado
+
+    def test_filter_blocks_breakout_and_daily_filter_entry(self):
+        p = q.Params(strategy="trend", daily_sma_len=200)
+        self.assertEqual(q.trend_regime(ind(close=120.0, daily_trend=1.0), p)["signal"], "LONG")
+        mr = q.trend_regime(ind(close=120.0, daily_trend=-1.0), p)
+        self.assertEqual(mr["signal"], "WAIT / NO_TRADE")
+        self.assertIn("TREND.LONG.daily_close_gt_sma200d", mr["blocking_filters"])
+        f = q.Params(strategy="trend", trend_entry="daily_filter", daily_sma_len=200, trend_exit_on_filter=True)
+        self.assertEqual(q.trend_regime(ind(close=80.0, daily_trend=1.0), f)["entry_trigger"], "daily_filter")
+        self.assertTrue(q.trend_exit_signal(ind(daily_trend=-1.0), "LONG", f))
+        self.assertFalse(q.trend_exit_signal(ind(daily_trend=1.0), "LONG", f))
+        self.assertFalse(q.trend_exit_signal(ind(daily_trend=-1.0), "LONG", p))   # sin trend_exit_on_filter
+        with self.assertRaises(ValueError):
+            q.trend_regime(ind(), q.Params(strategy="trend", trend_entry="daily_filter"))
+
+    def test_backtest_signal_exit_and_trade_from(self):
+        df = q.demo_chop_range(24 * 120, seed=9)
+        f = q.Params(strategy="trend", trend_entry="daily_filter", daily_sma_len=20, trend_exit_on_filter=True)
+        out = bt.run_backtest(df, f, trade_from=df.time.iloc[24 * 40])
+        self.assertGreaterEqual(pd.Timestamp(out["report"]["period"]["from"]), df.time.iloc[24 * 40])
+        self.assertIn("SIGNAL_EXIT", {t["exit_reason"] for t in out["trades"]})
+
+
+class TestPortfolioBacktest(unittest.TestCase):
+    def test_single_pair_matches_run_backtest_and_capital_is_shared(self):
+        df = q.demo_bull_trend(1500, seed=7)
+        for p in (q.Params(), TREND):
+            one = bt.run_portfolio_backtest({"BTCUSDT": df}, p)["report"]
+            ref = bt.run_backtest(df, p)["report"]["results"]
+            self.assertEqual((one["net_return_pct"], one["trades"]), (ref["net_return_pct"], ref["trades"]))
+        two = bt.run_portfolio_backtest({"AAAUSDT": df, "BBBUSDT": df}, q.Params())["report"]
+        self.assertGreater(two["skipped_by_capital"], 0)       # mismas señales: la segunda no cabe en el 85%
+
+
+class TestStrategyLab(unittest.TestCase):
+    def test_walk_forward_stores_runs_and_trades(self):
+        import strategy_lab as lab
+        data = {"AAAUSDT": q.demo_bull_trend(2200, seed=1).assign(
+            time=lambda d: pd.date_range("2024-01-01", periods=len(d), freq="4h", tz="UTC"))}
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "lab.db")
+            summ = lab.walk_forward(data, "4h", [{"strategy": "official"}, {"strategy": "trend"}], 6, 3,
+                                    db=db, workers=1, progress=lambda m: None)
+            self.assertGreaterEqual(len(summ["windows"]), 2)
+            con = sqlite3.connect(db)
+            n_res = con.execute("SELECT COUNT(*) FROM lab_results").fetchone()[0]
+            n_tr = con.execute("SELECT COUNT(*) FROM lab_trades").fetchone()[0]
+            con.close()
+            self.assertGreater(n_res, 0)
+            self.assertGreater(n_tr, 0)
+            self.assertIn("Resultado fuera de muestra", lab.markdown(summ, lab.fixed_params_table(db, summ["run_id"])))
+
+
 class TestTrendRunner(unittest.TestCase):
     def test_runner_moves_stop_at_candle_close_and_labels_alerts(self):
         calls = []

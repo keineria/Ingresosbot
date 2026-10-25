@@ -53,6 +53,12 @@ Trailing stop     = al cierre de cada vela:
 | `trend_sl_atr_mult` | `2.5` | SL inicial en ATR (también fija el tamaño de la posición) |
 | `trail_atr_mult` | `4.0` | Distancia del trailing en ATR: más alto deja correr más y devuelve más ganancia al salir |
 | `trend_allow_short` | `false` | `true` solo en Futuros |
+| `daily_sma_len` | `0` (en `trend_params.json`: `200`) | Filtro diario: LONG solo si el cierre diario de AYER está sobre la SMA de N días |
+| `trend_exit_on_filter` | `false` | `true`: cerrar a mercado cuando el filtro diario se da la vuelta |
+
+`trend_entry = "daily_filter"` entra solo con el filtro diario (sin ruptura). El filtro usa siempre el día anterior ya cerrado, para no mirar el futuro, y el bot descarga las velas necesarias (205 días) cuando está activo.
+
+**Configuración recomendada para paper** (`deploy/trend_params.json`, validada con datos de 2024-2026 en [docs/LAB_2024_2026.md](../docs/LAB_2024_2026.md)): 4h, ruptura de Donchian 20, SL inicial 2 ATR, trailing 5 ATR y filtro SMA200 diaria.
 
 Temporalidad recomendada: **4h**, porque da pocas operaciones, poca comisión y menos ruido. En 1h también funcionó en la investigación, pero paga unas 13 veces más comisiones.
 
