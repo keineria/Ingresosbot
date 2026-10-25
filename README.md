@@ -13,6 +13,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 
 **Perfil paralelo Trend Rider** ([SKILL_4](skills/SKILL_4_trend_rider.md), `--params '{"strategy": "trend"}'`): misma Capa 1; entra por ruptura del máximo de 20 velas sobre la EMA200 y sale con trailing stop a 4 ATR, sin TP fijo ni Break-Even. Las reglas oficiales siguen siendo el valor por defecto. Investigación, validación y cómo correrlo al lado del oficial: [docs/TREND_RIDER.md](docs/TREND_RIDER.md). Resultados con datos de 2024-2026 y 500 USD: [docs/LAB_2024_2026.md](docs/LAB_2024_2026.md).
 
+**Varios bots con nombre propio** (`deploy/bots.json`): el panel muestra cada bot con su cuenta simulada y la ficha "Cómo opera". El tercero es **Tortuga 55**: ruptura del máximo de 55 días en velas diarias, sobre BTC, ETH, SOL, BNB, XRP y oro tokenizado (PAXG), con SL 3 ATR y trailing 5 ATR (`python bot_runner.py --bot tortuga`). Estrategias y activos alternativos probados (rotación, medias móviles, ETFs, oro, grid), cómo encender Tortuga 55 y el informe diario a GitHub (`daily_report.py`): [docs/ALTERNATIVAS.md](docs/ALTERNATIVAS.md). Laboratorio para repetirlo: `alt_lab.py`.
+
 ## Módulos
 
 | Archivo | Qué hace |

@@ -1,0 +1,16 @@
+# systemd: informe diario de todos los bots (deploy/bots.json) publicado en la rama bot-reports de GitHub,
+# para poder seguir los resultados del paper trading sin entrar al VPS. Lo lanza ingresosbot-report.timer.
+# Antes hay que crear la deploy key y el clon (una sola vez): ver docs/ALTERNATIVAS.md, "Informe diario".
+[Unit]
+Description=Ingresosbot informe diario de los bots (paper trading) a GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ingresosbot
+Group=ingresosbot
+WorkingDirectory=/opt/Ingresosbot
+ExecStart=/opt/Ingresosbot/.venv/bin/python daily_report.py --push-dir /opt/ingresosbot-reports/repo --ssh-key /opt/ingresosbot-reports/deploy_key
+NoNewPrivileges=true
+PrivateTmp=true
