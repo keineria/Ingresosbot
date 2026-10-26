@@ -2,7 +2,7 @@
 # deploy/install_almalinux.sh lo copia pero no lo activa. Para encenderlo:
 #   sudo systemctl enable --now ingresosbot-trend
 #   journalctl -u ingresosbot-trend -f          # ver el log en vivo
-# Comparte el .env (pares y alertas de Telegram, que llegan con el prefijo [Trend Rider]);
+# Comparte el .env (alertas de Telegram, que llegan con el prefijo [Trend Rider]); sus pares van fijos aquí;
 # las variables de abajo tienen prioridad sobre el .env. Los parámetros se editan en deploy/trend_params.json.
 [Unit]
 Description=Ingresosbot Trend Rider paper trading 24/7 (perfil paralelo)
@@ -14,6 +14,7 @@ Type=simple
 User=ingresosbot
 Group=ingresosbot
 WorkingDirectory=/opt/Ingresosbot
+Environment=BOT_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT
 Environment=BOT_DB=data/trend_state.db
 Environment=BOT_INTERVAL=4h
 Environment=BOT_PARAMS=deploy/trend_params.json

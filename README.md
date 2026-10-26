@@ -101,7 +101,7 @@ Trend Rider en paralelo (paper, base `data/trend_state.db`, 4h): `sudo systemctl
 
 El instalador crea el usuario de servicio `ingresosbot`, el `.venv` con pandas y numpy, el `.env` (con una `DASHBOARD_ACCESS_KEY` aleatoria) y deja activos `ingresosbot.service` (bot) e `ingresosbot-web.service` (panel). Para publicar el panel con SSL en `https://bot.commonbird.com` sin abrir puertos sigue [deploy/CYBERPANEL_SETUP.md](deploy/CYBERPANEL_SETUP.md). Para actualizar: `sudo git -C /opt/Ingresosbot pull && sudo bash deploy/install_almalinux.sh`. Para mudarlo a otro VPS (p. ej. de USA a Francia, donde `api.binance.com` responde) sigue [deploy/MIGRAR_VPS.md](deploy/MIGRAR_VPS.md); el instalador también funciona en Ubuntu/Debian.
 
-Toda la configuración vive en `.env` (`BOT_SYMBOLS`, `BOT_INTERVAL`, `BOT_PARAMS`, `WEB_PORT`, alertas...), y la leen tanto el bot como el panel.
+Toda la configuración vive en `.env` (`BOT_SYMBOLS`, `BOT_INTERVAL`, `BOT_PARAMS`, `WEB_PORT`, alertas...), y la leen tanto el bot como el panel. Excepción: los pares de cada bot con nombre (Nathalia, Trend Rider, Tortuga 55) están fijos en `deploy/bots.json` o en su servicio, para que cambiar uno no mueva a los demás.
 
 **Kill switch**: desde el panel (o `POST /api/kill-switch`) pone la cuenta en `HALTED` al instante; el bot, que es otro proceso, lo ve en su siguiente ciclo porque el interruptor vive en SQLite. Las posiciones abiertas siguen protegidas por su SL/TP. Al desactivarlo, el estado vuelve a lo que digan las reglas del Circuit Breaker: si había 3 pérdidas o DD ≥ 3%, sigue en `HALTED` hasta terminar el enfriamiento.
 

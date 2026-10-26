@@ -2,7 +2,8 @@
 # A mano: copia a /etc/systemd/system/, cambia User/rutas y ejecuta
 #   sudo systemctl daemon-reload && sudo systemctl enable --now ingresosbot
 #   journalctl -u ingresosbot -f        # ver el log en vivo
-# Pares, temporalidad, base y parámetros salen del .env (BOT_SYMBOLS, BOT_INTERVAL, BOT_DB, BOT_PARAMS).
+# Los pares salen de deploy/bots.json (bot "oficial"); temporalidad, balance y parámetros, del .env
+# (BOT_INTERVAL, BOT_BALANCE, BOT_PARAMS).
 [Unit]
 Description=Ingresosbot paper trading 24/7
 After=network-online.target
@@ -13,7 +14,7 @@ Type=simple
 User=ingresosbot
 Group=ingresosbot
 WorkingDirectory=/opt/Ingresosbot
-ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --env-file .env --log-file logs/bot.log
+ExecStart=/opt/Ingresosbot/.venv/bin/python bot_runner.py --env-file .env --bot oficial --log-file logs/bot.log
 Restart=always
 RestartSec=10
 NoNewPrivileges=true

@@ -6,7 +6,7 @@
     "service": "ingresosbot",
     "db": "data/trading_state.db",
     "interval": null,
-    "symbols": null,
+    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"],
     "params": null,
     "balance": null,
     "summary": "Las reglas oficiales de las 3 Skills: compra retrocesos dentro de una tendencia alcista y sale con TP fijo o Break-Even.",
@@ -15,7 +15,7 @@
       "Stop loss a 1,6 ATR, take profit a 3,6 ATR y Break-Even al avanzar 1,5 ATR.",
       "Arriesga 1,5% del balance por operación (0,75% tras 2 pérdidas seguidas)."
     ],
-    "backtest": "Con datos 2024-2026 y 500 USD perdió -12% (caída máx. 29%). Sigue como referencia, no para dinero real."
+    "backtest": "Con datos 2024-2026 y 500 USD en BTC, ETH y SOL perdió -12% (caída máx. 29%). Desde el 26-oct-2026 vigila también BNB, XRP, ADA y DOGE (sin backtest propio todavía). Sigue como referencia, no para dinero real."
   },
   {
     "id": "trend",
@@ -24,7 +24,7 @@
     "service": "ingresosbot-trend",
     "db": "data/trend_state.db",
     "interval": "4h",
-    "symbols": null,
+    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
     "params": "deploy/trend_params.json",
     "balance": 500,
     "summary": "Sigue tendencias en velas de 4 horas: compra cuando el precio rompe su máximo de 20 velas y deja correr la ganancia.",
