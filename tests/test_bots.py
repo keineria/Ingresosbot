@@ -66,6 +66,11 @@ class TestBotsFile(unittest.TestCase):
         # Trend Rider en el panel = lo mismo que su servicio systemd (4h, su base, sus parámetros).
         cfg, p = bot_settings(find_bot("trend", ROOT / "deploy" / "bots.json"))
         self.assertEqual((cfg.interval, cfg.db_path, p.donchian_len, p.trail_atr_mult), ("4h", "data/trend_state.db", 20, 5.0))
+        self.assertEqual(cfg.symbols, ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+        # Nathalia (bot oficial): 7 pares fijos en bots.json; temporalidad y reglas siguen saliendo del .env.
+        cfg, p = bot_settings(find_bot("oficial", ROOT / "deploy" / "bots.json"))
+        self.assertEqual(cfg.symbols, ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"])
+        self.assertEqual((cfg.db_path, p.strategy), ("data/trading_state.db", "official"))
 
     def test_invalid_files(self):
         with tempfile.TemporaryDirectory() as tmp:
