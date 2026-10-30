@@ -185,6 +185,25 @@ class TestRiskGuardian(unittest.TestCase):
         self.assertEqual((r["stop_loss"], r["take_profit"], r["break_even_trigger"], r["break_even_new_sl"]),
                          (103.2, 92.8, 97.0, 99.8))
 
+    def test_cheap_coin_short_keeps_tp_below_entry(self):
+        # Caso real de Nathalia (DOGE 26-oct): con tick fijo 0.01 el TP del corto salía 0.08, sobre la entrada,
+        # y la posición se cerraba "en TAKE_PROFIT" con pérdida en el mismo minuto.
+        r = q.atr_risk_guardian("SHORT", 0.07633, 0.0004, 9770, 1.5, P)
+        self.assertLess(r["take_profit"], 0.07633)
+        self.assertGreater(r["stop_loss"], 0.07633)
+        self.assertAlmostEqual(r["take_profit"], 0.07633 - 3.6 * 0.0004, delta=1e-5)
+        self.assertAlmostEqual(r["stop_loss"], 0.07633 + 1.6 * 0.0004, delta=1e-5)
+        self.assertLessEqual(r["risk_pct_effective"], 1.5)
+        lo = q.atr_risk_guardian("LONG", 0.2022, 0.0015, 9770, 1.5, P)
+        self.assertLess(lo["stop_loss"], 0.2022)
+        self.assertGreater(lo["take_profit"], 0.2022)
+
+    def test_effective_tick(self):
+        self.assertEqual(q.effective_tick(100000.0, 0.01), 0.01)
+        self.assertEqual(q.effective_tick(100.0, 0.01), 0.01)
+        self.assertAlmostEqual(q.effective_tick(2.4, 0.01), 0.0001)
+        self.assertAlmostEqual(q.effective_tick(0.07633, 0.01), 0.000001)
+
     def test_throttled_end_to_end(self):
         r = q.run_engine({**HEALTHY, "consecutive_losses": 2}, manual=manual(atr14=2.0, close=100))
         self.assertEqual(r["layer_1_circuit_breaker"]["status"], "THROTTLED")

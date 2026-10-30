@@ -67,10 +67,13 @@ class TestBotsFile(unittest.TestCase):
         cfg, p = bot_settings(find_bot("trend", ROOT / "deploy" / "bots.json"))
         self.assertEqual((cfg.interval, cfg.db_path, p.donchian_len, p.trail_atr_mult), ("4h", "data/trend_state.db", 20, 5.0))
         self.assertEqual(cfg.symbols, ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
-        # Nathalia (bot oficial): 7 pares fijos en bots.json; temporalidad y reglas siguen saliendo del .env.
+        # Nathalia (desde el 30-oct-2026): rupturas 4h en 7 pares, cuenta nueva de 500 USD, todo fijo en bots.json.
         cfg, p = bot_settings(find_bot("oficial", ROOT / "deploy" / "bots.json"))
         self.assertEqual(cfg.symbols, ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"])
-        self.assertEqual((cfg.db_path, p.strategy), ("data/trading_state.db", "official"))
+        self.assertEqual((cfg.interval, cfg.db_path, cfg.initial_balance), ("4h", "data/nathalia_state.db", 500.0))
+        self.assertEqual((p.strategy, p.trend_entry, p.donchian_len, p.trend_sl_atr_mult, p.trail_atr_mult,
+                          p.daily_sma_len), ("trend", "breakout", 20, 2.0, 5.0, 200))
+        self.assertFalse(p.trend_allow_short)
 
     def test_invalid_files(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -125,7 +125,7 @@ diario con las cifras. Cada llamada queda anotada con su costo en `data/ai_state
    AI_BOT_DBS=
    ```
 
-   (`AI_BOT_DBS` vacío = Keiner y Celeste con todos los agentes, Nathalia solo con el resumen.)
+   (`AI_BOT_DBS` vacío = Keiner y Celeste con todos los agentes, Nathalia (rupturas 4h, `data/nathalia_state.db`) solo con el resumen.)
 
 5. Guarda con **Ctrl+O** y luego **Enter**; sal con **Ctrl+X**.
 

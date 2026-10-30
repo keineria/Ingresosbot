@@ -193,11 +193,11 @@ COORD_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["t
 # Configuración
 # ════════════════════════════════════════════════════════════════════════════
 BOTS_FILE = "deploy/bots.json"
-# Keiner (Trend Rider 4h) y Celeste (Tortuga 55 diario) con todos los agentes; Nathalia (Bot Oficial 1h, perdedor
-# en el backtest) solo en el resumen y con la pausa del vigía.
+# Keiner (Trend Rider 4h) y Celeste (Tortuga 55 diario) con todos los agentes; Nathalia (rupturas 4h en 7 monedas,
+# aún sin historial en vivo) solo en el resumen y con la pausa del vigía.
 DEFAULT_BOT_DBS = ("data/trend_state.db|deploy/trend_params.json|4h,"
                    "data/tortuga_state.db|deploy/tortuga_params.json|1d,"
-                   "data/trading_state.db||1h|solo_resumen")
+                   "data/nathalia_state.db|deploy/nathalia_params.json|4h|solo_resumen")
 # Laboratorio en sombra de cada estrategia con analista (20 pares; Tortuga también con oro tokenizado)
 DEFAULT_LAB = "deploy/trend_params.json|4h,deploy/tortuga_params.json|1d|" + LAB_SYMBOLS.replace(",", " ") + " PAXGUSDT"
 
