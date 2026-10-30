@@ -160,7 +160,7 @@ def markdown(rows: list[dict], bot: str) -> str:
     df = pd.DataFrame(rows)
     df = df[df.bot == bot]
     wins = list(dict.fromkeys(df.window))
-    lines = [f"### {'Keiner · Trend Rider (4h)' if bot == 'trend' else 'Celeste · Tortuga 55 (1d)'}", "",
+    lines = [f"### {'Keiner · Trend Rider (4h)' if bot == 'trend' else 'Celeste · Tortuga (1d)'}", "",
              "Retorno % · caída máx. % · operaciones por ventana (cada ventana empieza con el mismo balance).", "",
              "| Variante | " + " | ".join(wins) + " | Ops/mes (12m) | USD largos / cortos (todo) |",
              "|---|" + "---|" * (len(wins) + 2)]

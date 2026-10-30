@@ -24,20 +24,20 @@
     "service": "ingresosbot-trend",
     "db": "data/trend_state.db",
     "interval": "4h",
-    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "PAXGUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "TRXUSDT", "AVAXUSDT", "LTCUSDT"],
     "params": "deploy/trend_params.json",
     "balance": 500,
-    "summary": "Sigue tendencias en velas de 4 horas: compra cuando el precio rompe su máximo de 20 velas y deja correr la ganancia.",
+    "summary": "Sigue tendencias con fuerza en velas de 4 horas sobre 12 monedas y oro: compra cuando el precio rompe su máximo de 20 velas con ADX alto y deja correr la ganancia.",
     "how": [
-      "Entra si el cierre supera el máximo de las 20 velas anteriores, está sobre la EMA 200 y el cierre diario de ayer está sobre su media de 200 días.",
+      "Entra si el cierre supera el máximo de las 20 velas anteriores, está sobre la EMA 200, el cierre diario de ayer está sobre su media de 200 días y el ADX es 20 o más (tendencia con fuerza; evita las rupturas falsas del mercado lateral).",
       "Stop loss inicial a 2 ATR; luego un trailing stop a 5 ATR del máximo que solo sube. Sin take profit fijo.",
-      "Arriesga 1,5% del balance por operación, con el mismo Circuit Breaker (Capa 1)."
+      "Arriesga 1,5% del balance por operación, como máximo 30% del balance en cada moneda para poder tener varias a la vez, con el mismo Circuit Breaker (Capa 1). En mercado bajista se queda en dólares."
     ],
-    "backtest": "2024-2026 con 500 USD en BTC+ETH+SOL: +50% con caída máx. 18,7%. Gana pocas veces (≈1 de 3), pero gana mucho cuando acierta."
+    "backtest": "2022→oct-2026 con 500 USD en 12 monedas y oro: +185% con caída máx. 19,6% (antes, 3 monedas: +125%, 18,7%). En 2022 (bajista) -3,6%. Opera unas 3-4 veces al mes (antes menos de 1)."
   },
   {
     "id": "tortuga",
-    "name": "Tortuga 55",
+    "name": "Tortuga 30",
     "trader": "Celeste",
     "service": "ingresosbot-tortuga",
     "db": "data/tortuga_state.db",
@@ -45,12 +45,12 @@
     "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "PAXGUSDT"],
     "params": "deploy/tortuga_params.json",
     "balance": 500,
-    "summary": "La regla clásica de los Turtle Traders en velas diarias: compra la ruptura del máximo de 55 días. Incluye oro tokenizado (PAXG) para no depender solo de cripto.",
+    "summary": "Rupturas de 30 días en velas diarias, hacia arriba y hacia abajo, solo cuando la tendencia tiene fuerza. Incluye oro tokenizado (PAXG). Los cortos son solo en papel: con dinero real requieren Futuros 1x.",
     "how": [
-      "Una vez al día (00:00 UTC) mira cada par. Compra si el cierre supera el máximo de los 55 días anteriores, está sobre la EMA 200 y el cierre de ayer está sobre su media de 200 días.",
-      "Stop loss inicial a 3 ATR diarios; luego un trailing stop a 5 ATR del máximo que solo sube. Sin take profit fijo: deja correr la tendencia.",
-      "Arriesga 1,5% del balance por operación, con el mismo Circuit Breaker (Capa 1). Opera poco: unas 10 entradas al año."
+      "Una vez al día (00:00 UTC) mira cada par. Compra si el cierre supera el máximo de los 30 días anteriores, está sobre la EMA 200, el cierre de ayer está sobre su media de 200 días y el ADX es 20 o más.",
+      "En mercado bajista hace el espejo: vende en corto si el cierre rompe el mínimo de 30 días, bajo la EMA 200 y bajo la media de 200 días, con ADX 20 o más. Sin apalancamiento (1x).",
+      "Stop loss inicial a 3 ATR diarios; luego un trailing stop a 5 ATR que solo se mueve a favor. Arriesga 1,5% por operación, con el mismo Circuit Breaker (Capa 1)."
     ],
-    "backtest": "2024-2026 con 500 USD en BTC, ETH, SOL, BNB y XRP: +51,5% con la menor caída de todas las variantes (12,1%), 30 operaciones y 3,8 USD de comisiones. En 2026 (bajista) +4,1% mientras comprar y mantener perdía -18%. El oro (PAXG) aún no está probado con datos: se valida en el VPS."
+    "backtest": "2022→oct-2026 con 500 USD en 5 cripto + oro: +161% con caída máx. 19,6% (antes +109%, 13,7%). Positiva en cada año: 2022 +7,6%, 2023 +17%, 2024 +55%, 2025 +21%, últimos 12 meses +17%. Gana entrando en mercado alcista, bajista y lateral. Unas 2 operaciones al mes."
   }
 ]

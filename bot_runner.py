@@ -25,7 +25,7 @@ el trailing stop sube con el máximo desde la entrada (evento TRAILING_STOP). Pa
 usa otra base: python bot_runner.py --db data/trend_state.db --interval 4h --params deploy/trend_params.json
 
 Varios bots con nombre propio (deploy/bots.json): --bot ID toma de ese archivo la base, la temporalidad, los pares,
-los parámetros y el nombre que antepone a las alertas. Así corre "Tortuga 55" (diario, cripto + oro PAXG):
+los parámetros y el nombre que antepone a las alertas. Así corre "Tortuga 30" (diario, cripto + oro PAXG):
   python bot_runner.py --env-file .env --bot tortuga --log-file logs/bot-tortuga.log
 
 Uso en el VPS:

@@ -1,11 +1,12 @@
 {
   "strategy": "trend",
   "trend_entry": "breakout",
-  "donchian_len": 55,
+  "donchian_len": 30,
   "trend_sl_atr_mult": 3.0,
   "trail_atr_mult": 5.0,
   "daily_sma_len": 200,
   "trend_exit_on_filter": false,
-  "trend_allow_short": false,
-  "price_tick": 0.0001
+  "trend_allow_short": true,
+  "price_tick": 0.0001,
+  "trend_min_adx": 20.0
 }

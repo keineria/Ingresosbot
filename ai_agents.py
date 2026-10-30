@@ -193,7 +193,7 @@ COORD_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["t
 # Configuración
 # ════════════════════════════════════════════════════════════════════════════
 BOTS_FILE = "deploy/bots.json"
-# Keiner (Trend Rider 4h) y Celeste (Tortuga 55 diario) con todos los agentes; Nathalia (rupturas 4h en 7 monedas,
+# Keiner (Trend Rider 4h) y Celeste (Tortuga 30 diario) con todos los agentes; Nathalia (rupturas 4h en 7 monedas,
 # aún sin historial en vivo) solo en el resumen y con la pausa del vigía.
 DEFAULT_BOT_DBS = ("data/trend_state.db|deploy/trend_params.json|4h,"
                    "data/tortuga_state.db|deploy/tortuga_params.json|1d,"
@@ -252,7 +252,7 @@ def profile_label(profile: str) -> str:
     if known:
         return known
     name, _, interval = profile.rpartition("_")
-    return {"trend_params": "Trend Rider", "tortuga_params": "Tortuga 55", "oficial": "Oficial"}.get(name, name) \
+    return {"trend_params": "Trend Rider", "tortuga_params": "Tortuga 30", "oficial": "Oficial"}.get(name, name) \
         + f" {interval}"
 
 
@@ -1529,7 +1529,7 @@ class AgentService:
 COST_ASSUMPTIONS = {
     "vigia": (180, 1500, {"low": 600, "medium": 1200, "high": 2500}),
     "coordinador": (30, 2500, {"low": 800, "medium": 1200, "high": 2000}),
-    # Keiner (Trend Rider 4h) + Celeste (Tortuga 55 diario), cada uno con su laboratorio de 20 pares
+    # Keiner (Trend Rider 4h) + Celeste (Tortuga 30 diario), cada uno con su laboratorio de 20 pares
     "analista": (18, 2500, {"low": 700, "medium": 1500, "high": 3000}),
     "salida": (85, 2000, {"low": 600, "medium": 1200, "high": 2500}),
     "auditor": (4, 3000, {"low": 800, "medium": 1500, "high": 3000}),

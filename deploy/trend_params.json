@@ -7,5 +7,7 @@
   "daily_sma_len": 200,
   "trend_exit_on_filter": false,
   "trend_allow_short": false,
-  "price_tick": 0.0001
+  "price_tick": 0.0001,
+  "trend_min_adx": 20.0,
+  "max_position_pct": 30.0
 }
