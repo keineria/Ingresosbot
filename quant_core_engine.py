@@ -79,7 +79,8 @@ class Params:
     tp_atr_mult: float = 3.6
     be_atr_mult: float = 1.5
     be_fee_offset_pct: float = 0.2     # SL nuevo = Entry * (1 + 0.2%) en long
-    max_allocation_pct: float = 85.0   # tope del capital por posición
+    max_allocation_pct: float = 85.0   # tope del capital por posición (y del total comprometido entre pares)
+    max_position_pct: float = 0.0      # >0: tope MÁS BAJO por posición, para tener varias monedas a la vez
     max_leverage: float = 1.0          # 1.0 = Spot. En Futuros el tope escala a 85% × max_leverage
     price_tick: float = 0.01           # redondeo de precios ("al centavo")
     qty_step: float = 0.000001         # paso mínimo de cantidad del exchange
@@ -101,6 +102,19 @@ class Params:
     trend_allow_short: bool = False    # True solo en Futuros: ruptura bajista bajo la EMA200
     daily_sma_len: int = 0             # >0: filtro diario; LONG solo si el cierre diario de AYER > SMA de N días
     trend_exit_on_filter: bool = False  # True: cerrar la posición cuando el filtro diario se da la vuelta
+    # Filtros de acierto opcionales sobre la ruptura (0 = apagado). Solo endurecen la entrada; nunca la crean.
+    trend_min_vol_ratio: float = 0.0   # volumen de la vela de señal / media de volumen de 20 velas >= X
+    trend_min_atr_rank: float = 0.0    # percentil (0-1) del ATR% de la vela entre las últimas atr_rank_len >= X
+    trend_max_ext_atr: float = 0.0     # (Close - EMA20) / ATR <= X: no comprar una ruptura demasiado estirada
+    atr_rank_len: int = 180            # velas para el percentil de volatilidad (180 velas de 4h = 30 días)
+    trend_min_breakout_atr: float = 0.0  # empuje: (Close - máximo del canal) / ATR >= X en la vela de ruptura
+    trend_min_adx: float = 0.0         # empuje: ADX14 >= X (fuerza de la tendencia, sin dirección)
+    # Cierres opcionales además del SL / trailing (0 o "" = apagado). Se evalúan al cierre de vela y salen a mercado.
+    trend_exit_low_len: int = 0        # Close < mínimo de las N velas anteriores (salida "tortuga", p. ej. 10)
+    trend_exit_ema: str = ""           # "ema20" | "ema50": Close por debajo de esa media
+    trend_stale_bars: int = 0          # tras N velas, si el cierre sigue en o bajo la entrada: fuera (trade sin empuje)
+    trend_tight_after_r: float = 0.0   # al ganar X veces el riesgo inicial (R), el trailing se ajusta a...
+    trend_tight_trail_atr: float = 2.5  # ...este múltiplo de ATR (asegura más ganancia en las subidas largas)
 
     @property
     def min_candles(self) -> int:
@@ -202,6 +216,28 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> 
     return pd.Series(rma(tr, length, start=0), index=close.index)
 
 
+def adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
+    """ADX de Wilder (RMA), como TradingView. 0 mientras no hay historia suficiente."""
+    h, l, c = (s.to_numpy(float) for s in (high, low, close))
+    n = len(c)
+    if n < 2 * length + 1:
+        return pd.Series(np.zeros(n), index=close.index)
+    up, down = np.diff(h, prepend=h[0]), -np.diff(l, prepend=l[0])
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+    prev_c = np.roll(c, 1)
+    tr = np.maximum.reduce([h - l, np.abs(h - prev_c), np.abs(l - prev_c)])
+    tr[0] = plus_dm[0] = minus_dm[0] = 0.0
+    atr_ = rma(tr, length, start=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pdi = 100 * rma(plus_dm, length, start=1) / atr_
+        mdi = 100 * rma(minus_dm, length, start=1) / atr_
+        dx = 100 * np.abs(pdi - mdi) / (pdi + mdi)
+    dx = np.nan_to_num(dx, nan=0.0)
+    out = rma(dx, length, start=length)
+    return pd.Series(np.nan_to_num(out, nan=0.0), index=close.index)
+
+
 def compute_indicators(df: pd.DataFrame, p: Params) -> pd.DataFrame:
     out = df.copy()
     out["ema20"] = ema(out["close"], p.ema_fast)
@@ -222,11 +258,24 @@ def compute_indicators(df: pd.DataFrame, p: Params) -> pd.DataFrame:
         sma = daily_close.rolling(p.daily_sma_len).mean()
         sign = np.sign(daily_close - sma).shift(1).fillna(0.0)
         out["daily_trend"] = day.map(pd.Series(sign.values, index=pd.to_datetime(sign.index, utc=True))).fillna(0.0).values
+    # Variables de los filtros de acierto. Sin historia suficiente valen 0: un filtro encendido no deja entrar.
+    vol_mean = out["volume"].rolling(20).mean()
+    out["vol_ratio"] = (out["volume"] / vol_mean).where(vol_mean > 0).fillna(0.0)
+    atr_pct = out["atr14"] / out["close"]
+    out["atr_rank"] = atr_pct.rolling(p.atr_rank_len, min_periods=max(2, p.atr_rank_len // 3)).rank(pct=True).fillna(0.0)
+    out["ext_atr"] = ((out["close"] - out["ema20"]) / out["atr14"]).where(out["atr14"] > 0).fillna(0.0)
+    out["breakout_atr"] = ((out["close"] - out["donchian_high"]) / out["atr14"]).where(out["atr14"] > 0).fillna(0.0)
+    out["adx14"] = adx(out["high"], out["low"], out["close"], p.atr_len)
+    # Canal de salida (velas ANTERIORES). 0 = apagado o sin historia: no dispara.
+    n_exit = max(1, p.trend_exit_low_len)
+    out["exit_low"] = out["low"].rolling(n_exit).min().shift(1).fillna(0.0) if p.trend_exit_low_len else 0.0
+    out["exit_high"] = out["high"].rolling(n_exit).max().shift(1).fillna(0.0) if p.trend_exit_low_len else 0.0
     return out
 
 
 INDICATOR_KEYS = ("close", "ema20", "ema50", "ema200", "rsi14", "atr14", "ema20_slope_pct",
-                  "donchian_high", "donchian_low", "daily_trend")
+                  "donchian_high", "donchian_low", "daily_trend", "vol_ratio", "atr_rank", "ext_atr",
+                  "breakout_atr", "adx14", "exit_low", "exit_high")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -518,7 +567,9 @@ def trend_regime(ind: dict, p: Params) -> dict:
     both:     cualquiera de las dos.
     daily_filter: solo el filtro diario (comprado mientras el cierre diario de ayer > SMA de daily_sma_len días).
     Con daily_sma_len > 0 el filtro diario se exige además en cualquier modo.
-    Sin filtro de extensión en la ruptura: una ruptura suele ir estirada y es justo la que se quiere.
+    Sin filtro de extensión en la ruptura por defecto: una ruptura suele ir estirada y es justo la que se quiere.
+    Filtros de acierto opcionales (trend_min_vol_ratio, trend_min_atr_rank, trend_max_ext_atr): con valor > 0 se
+    exigen además en la ruptura; con 0 (por defecto) el perfil se comporta exactamente igual que sin ellos.
     """
     if p.trend_entry not in TREND_ENTRIES:
         raise ValueError(f"trend_entry debe ser uno de {TREND_ENTRIES} (recibido {p.trend_entry!r})")
@@ -539,6 +590,28 @@ def trend_regime(ind: dict, p: Params) -> dict:
                     "short_enabled": p.trend_allow_short}
     if p.trend_entry == "daily_filter":
         long_checks, short_checks = {}, {"short_enabled": p.trend_allow_short}
+    # Filtros de acierto (SKILL_4, opcionales): se exigen además de la regla de entrada, en largos y cortos.
+    if p.trend_min_vol_ratio > 0:
+        ok = float(ind.get("vol_ratio") or 0.0) >= p.trend_min_vol_ratio
+        long_checks[f"volume_ge_{p.trend_min_vol_ratio:g}x_avg20"] = ok
+        short_checks[f"volume_ge_{p.trend_min_vol_ratio:g}x_avg20"] = ok
+    if p.trend_min_atr_rank > 0:
+        ok = float(ind.get("atr_rank") or 0.0) >= p.trend_min_atr_rank
+        long_checks[f"atr_rank_ge_{p.trend_min_atr_rank:g}"] = ok
+        short_checks[f"atr_rank_ge_{p.trend_min_atr_rank:g}"] = ok
+    if p.trend_min_breakout_atr > 0:
+        b = float(ind.get("breakout_atr") or 0.0)
+        long_checks[f"breakout_push_ge_{p.trend_min_breakout_atr:g}atr"] = b >= p.trend_min_breakout_atr
+        short_checks[f"breakout_push_ge_{p.trend_min_breakout_atr:g}atr"] = (
+            dl is not None and ind["atr14"] > 0 and (dl - close) / ind["atr14"] >= p.trend_min_breakout_atr)
+    if p.trend_min_adx > 0:
+        ok = float(ind.get("adx14") or 0.0) >= p.trend_min_adx
+        long_checks[f"adx_ge_{p.trend_min_adx:g}"] = ok
+        short_checks[f"adx_ge_{p.trend_min_adx:g}"] = ok
+    if p.trend_max_ext_atr > 0:
+        ext = float(ind.get("ext_atr") or 0.0)
+        long_checks[f"ext_le_{p.trend_max_ext_atr:g}atr"] = ext <= p.trend_max_ext_atr
+        short_checks[f"ext_ge_-{p.trend_max_ext_atr:g}atr"] = ext >= -p.trend_max_ext_atr
     daily_long = daily_short = True
     if p.daily_sma_len > 0:
         dt = float(ind.get("daily_trend") or 0.0)
@@ -580,12 +653,45 @@ def trend_regime(ind: dict, p: Params) -> dict:
     return out
 
 
-def trend_exit_signal(ind: dict, side: str, p: Params) -> bool:
-    """True si el filtro diario se dio la vuelta contra la posición (solo con trend_exit_on_filter)."""
-    if not (p.trend_exit_on_filter and p.daily_sma_len > 0):
-        return False
-    dt = float(ind.get("daily_trend") or 0.0)
-    return dt <= 0 if side == "LONG" else dt >= 0
+def trend_exit_reason(ind: dict, side: str, p: Params, entry_price: float | None = None,
+                      bars_held: int | None = None) -> str | None:
+    """Motivo de cierre a mercado al cierre de la vela (perfil "trend"), o None si ninguna regla encendida dispara.
+
+    SIGNAL_EXIT:       el filtro diario se dio la vuelta (trend_exit_on_filter).
+    CHANNEL_EXIT:      Close rompe el mínimo (LONG) / máximo (SHORT) de las trend_exit_low_len velas anteriores.
+    EMA_EXIT:          Close cruza la media trend_exit_ema en contra.
+    STALE_EXIT:        lleva trend_stale_bars velas y el cierre no supera la entrada (no hubo empuje).
+    """
+    d = 1 if side == "LONG" else -1
+    close = float(ind["close"])
+    if p.trend_exit_on_filter and p.daily_sma_len > 0:
+        dt = float(ind.get("daily_trend") or 0.0)
+        if (dt <= 0) if side == "LONG" else (dt >= 0):
+            return "SIGNAL_EXIT"
+    if p.trend_exit_low_len > 0:
+        level = float(ind.get("exit_low" if side == "LONG" else "exit_high") or 0.0)
+        if level > 0 and (close - level) * d < 0:
+            return "CHANNEL_EXIT"
+    if p.trend_exit_ema:
+        if p.trend_exit_ema not in ("ema20", "ema50"):
+            raise ValueError("trend_exit_ema debe ser '', 'ema20' o 'ema50'")
+        if (close - float(ind[p.trend_exit_ema])) * d < 0:
+            return "EMA_EXIT"
+    if p.trend_stale_bars > 0 and entry_price and bars_held is not None and bars_held >= p.trend_stale_bars:
+        if (close - entry_price) * d <= 0:
+            return "STALE_EXIT"
+    return None
+
+
+def trend_exit_signal(ind: dict, side: str, p: Params, entry_price: float | None = None,
+                      bars_held: int | None = None) -> bool:
+    """True si alguna regla de cierre encendida dispara (ver trend_exit_reason)."""
+    return trend_exit_reason(ind, side, p, entry_price, bars_held) is not None
+
+
+def trend_has_signal_exits(p: Params) -> bool:
+    return p.strategy == "trend" and bool((p.trend_exit_on_filter and p.daily_sma_len > 0) or p.trend_exit_low_len
+                                          or p.trend_exit_ema or p.trend_stale_bars)
 
 
 def evaluate_layer2(ind: dict, p: Params) -> dict:
@@ -631,7 +737,8 @@ def atr_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
     sl_distance_pct = round(abs(entry - sl) / entry, 12)         # en fracción
     risk_usd_target = balance * risk_pct / 100.0
     size_by_risk = risk_usd_target / sl_distance_pct
-    size_cap = balance * p.max_allocation_pct / 100.0 * p.max_leverage
+    per_pos = min(p.max_allocation_pct, p.max_position_pct) if p.max_position_pct > 0 else p.max_allocation_pct
+    size_cap = balance * per_pos / 100.0 * p.max_leverage
     capped = size_by_risk > size_cap
     size_usd = floor_to_step(min(size_cap, size_by_risk), 0.01)
     qty = floor_to_step(size_usd / entry, p.qty_step)
@@ -704,7 +811,8 @@ def _manual_indicators(m: dict, p: Params) -> dict:
         ind["ema20_slope_pct"] = (ind["ema20"] / float(m["ema20_prev3"]) - 1.0) * 100.0
     else:
         raise ValueError("Modo manual: falta 'ema20_prev3' o 'ema20_slope_pct'.")
-    for k in ("donchian_high", "donchian_low", "daily_trend"):      # solo los necesita el perfil "trend"
+    for k in ("donchian_high", "donchian_low", "daily_trend",      # solo los necesita el perfil "trend"
+              "vol_ratio", "atr_rank", "ext_atr", "breakout_atr", "adx14", "exit_low", "exit_high"):
         if k in m:
             ind[k] = float(m[k])
     return ind
