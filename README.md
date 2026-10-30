@@ -17,6 +17,8 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 
 **Varios bots con nombre propio** (`deploy/bots.json`): el panel muestra cada bot con su cuenta simulada y la ficha "Cómo opera". El tercero es **Tortuga 55**: ruptura del máximo de 55 días en velas diarias, sobre BTC, ETH, SOL, BNB, XRP y oro tokenizado (PAXG), con SL 3 ATR y trailing 5 ATR (`python bot_runner.py --bot tortuga`). Estrategias y activos alternativos probados (rotación, medias móviles, ETFs, oro, grid), cómo encender Tortuga 55 y el informe diario a GitHub (`daily_report.py`): [docs/ALTERNATIVAS.md](docs/ALTERNATIVAS.md). Laboratorio para repetirlo: `alt_lab.py`.
 
+**Cazador (en laboratorio)**: candidato a cuarto bot, más atrevido, que compraría rupturas cortas con volumen en velas de 15 min y 1 h sobre unas 40 monedas, con verificaciones anti-trampa y apagado automático al -20%. Antes de construirlo, `hunter_lab.py` lo prueba con datos de 2024-2026 en una sola cuenta de 500 USD; si ninguna variante pasa, no se construye. Cómo correrlo en el VPS: [docs/CAZADOR.md](docs/CAZADOR.md).
+
 **Panel con todos los bots en vivo**: `bot.commonbird.com` abre en *Todos los bots*, una tarjeta en vivo por estrategia (si el proceso está vivo, Capa 1, valor de la cuenta, posiciones con su precio actual, últimas operaciones, decisión de la última vela) y la curva comparada en %. Para añadir un cuarto bot basta con su ficha en `deploy/bots.json` y `systemctl enable --now ingresosbot-bot@ID`: [docs/PANEL_BOTS.md](docs/PANEL_BOTS.md).
 
 **Tu cuenta real de Binance, solo lectura**: la pestaña *Mi Binance* del panel muestra cada moneda que tienes en Spot, Earn y Funding con su valor en dólares. Usa una API key con solo *Enable Reading* (`BINANCE_API_KEY` / `BINANCE_API_SECRET` en `.env`); `binance_account.py` solo conoce llamadas de lectura y no usa una llave que permita operar o retirar. Los bots siguen en paper. Paso a paso: [docs/BINANCE_SOLO_LECTURA.md](docs/BINANCE_SOLO_LECTURA.md).
@@ -31,6 +33,7 @@ Motor offline (solo Python + pandas + numpy, sin APIs externas) que evalúa cada
 | `backtester.py` | Backtest vela a vela con engine + state_manager, comisión 0.08% por orden; `--portfolio` = varios pares con una sola cuenta |
 | `strategy_lab.py` | Walk-forward: elige parámetros con el pasado, los mide en meses que no vio y guarda cada orden simulada en SQLite |
 | `sentiment_lab.py` | Prueba filtros externos de la Capa 1 (Fear & Greed, días FOMC/CPI) sobre Trend Rider en las 20 combinaciones de pares |
+| `hunter_lab.py` | Laboratorio del Cazador: rupturas cortas con volumen en ~40 monedas (15 min / 1 h), una cuenta compartida, elección con la primera mitad y validación en la segunda y en 20 grupos |
 | `bot_runner.py` | Bot 24/7 en paper trading: ciclo al cierre de cada vela + vigilancia de precio cada 15 s |
 | `notifier.py` | Alertas a webhook (n8n) y Telegram: apertura, Break-Even, cierre, cambios del Circuit Breaker y kill switch |
 | `web_server.py` + `static/index.html` | Panel (tema oscuro o claro, cadena de decisión por capas, KPIs de hoy/semana/mes, pestaña «Plan de aportes» para proyectar capital + aporte mensual, sin CDN) y API de control (`/api/state`, `/api/scan-now`, `/api/kill-switch`, `/api/binance` de solo lectura) en 127.0.0.1:8050 |
