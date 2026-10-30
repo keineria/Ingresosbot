@@ -56,7 +56,7 @@ Los precios se redondean a `price_tick` (por defecto `0.01`) con aritmética dec
 | Break_Even_Trigger | hacia arriba | hacia abajo | Nunca se activa antes de tiempo |
 | Break_Even_New_SL | hacia arriba | hacia abajo | Siempre cubre la comisión completa |
 
-Para activos con precio < 1 USD, ajustar `price_tick` al tick real del par (p. ej. `0.0001`).
+Si `price_tick` es mayor que el 0,01% del precio de entrada (monedas baratas como DOGE, ADA o XRP), el motor usa automáticamente un tick 10, 100... veces más fino (`effective_tick()`), para que el redondeo nunca mueva un nivel más de un 0,01%. Si aun así el SL o el TP no quedan a su lado de la entrada, no hay orden.
 
 ## 5. Tamaño de posición
 

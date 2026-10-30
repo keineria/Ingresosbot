@@ -35,15 +35,15 @@ del detalle, y queda anotado en el historial de control.
 Para apagarlo del todo en el servidor (no hace falta): `sudo systemctl disable --now SERVICIO`, con el servicio del
 campo `service` de `deploy/bots.json` (por ejemplo `ingresosbot-tortuga`).
 
-Cada bot lleva un **nombre de persona** (campo `trader` en `deploy/bots.json`): Nathalia opera el Bot Oficial, Keiner
-opera Trend Rider y Celeste opera Tortuga 55. Se cambian editando ese campo; el nombre de la estrategia (`name`) sigue
+Cada bot lleva un **nombre de persona** (campo `trader` en `deploy/bots.json`): Nathalia opera Rupturas 7 monedas (hasta el
+30-oct-2026 operaba las reglas oficiales), Keiner opera Trend Rider y Celeste opera Tortuga 55. Se cambian editando ese campo; el nombre de la estrategia (`name`) sigue
 debajo para no perder la referencia.
 
 Debajo de las tarjetas sigue la **Cadena de decisión** (Datos → Capa 1 → Capa 2 → Capa 3 → Ejecución), con un
 selector para ver la de cada bot y el botón "Escanear ahora".
 
-Arriba, **Rendimiento comparado** dibuja el % de cada bot sobre su propio capital inicial (el Bot Oficial empezó con
-10.000 y los otros con 500, por eso se compara en %, no en dólares). Cada bot tiene siempre el mismo color.
+Arriba, **Rendimiento comparado** dibuja el % de cada bot sobre su propio capital inicial (todos empiezan ahora con
+500 USD; se compara en % para que un bot nuevo y uno veterano se vean en la misma escala). Cada bot tiene siempre el mismo color.
 
 Con **Ver detalle** (o las pestañas de arriba) se entra en un bot: la cadena de decisión de las 3 capas, su ficha
 "Cómo opera", el Kill Switch de ese bot, el historial completo y el Plan de aportes.

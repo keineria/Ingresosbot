@@ -125,6 +125,16 @@ def round_to_step(value: float, step: float, mode=ROUND_HALF_UP) -> float:
     return float(q * step_d)
 
 
+def effective_tick(price: float, tick: float) -> float:
+    """Tick de redondeo para este precio: `tick`, o uno 10, 100... veces más fino si `tick` supera el 0,01%
+    del precio. Con 0.01 fijo, DOGE (0,07 USD) redondeaba el TP de un corto a 0,08: por encima de la entrada."""
+    t = _dec(tick)
+    limit = _dec(price) / Decimal(10000)
+    while t > limit and t > Decimal("1e-12"):
+        t /= 10
+    return float(t)
+
+
 def floor_to_step(value: float, step: float) -> float:
     return round_to_step(value, step, ROUND_DOWN)
 
@@ -617,16 +627,19 @@ def atr_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
 
     # Redondeo al tick. El SL se redondea "hacia afuera" (nunca más ceñido que la fórmula),
     # el TP "hacia adentro" (nunca más ambicioso que la fórmula).
+    tick = effective_tick(entry, p.price_tick)
     if side == "LONG":
-        sl = floor_to_step(sl_raw, p.price_tick)
-        tp = floor_to_step(tp_raw, p.price_tick)
-        be = ceil_to_step(be_raw, p.price_tick)
-        be_sl = ceil_to_step(be_sl_raw, p.price_tick)
+        sl = floor_to_step(sl_raw, tick)
+        tp = floor_to_step(tp_raw, tick)
+        be = ceil_to_step(be_raw, tick)
+        be_sl = ceil_to_step(be_sl_raw, tick)
     else:
-        sl = ceil_to_step(sl_raw, p.price_tick)
-        tp = ceil_to_step(tp_raw, p.price_tick)
-        be = floor_to_step(be_raw, p.price_tick)
-        be_sl = floor_to_step(be_sl_raw, p.price_tick)
+        sl = ceil_to_step(sl_raw, tick)
+        tp = ceil_to_step(tp_raw, tick)
+        be = floor_to_step(be_raw, tick)
+        be_sl = floor_to_step(be_sl_raw, tick)
+    if d * (tp - entry) <= 0 or d * (entry - sl) <= 0:
+        raise ValueError(f"SL {sl} / TP {tp} no quedan a cada lado de la entrada {entry}: tick {tick} demasiado grueso.")
 
     sl_distance_pct = round(abs(entry - sl) / entry, 12)         # en fracción
     risk_usd_target = balance * risk_pct / 100.0
