@@ -25,7 +25,7 @@ el trailing stop sube con el máximo desde la entrada (evento TRAILING_STOP). Pa
 usa otra base: python bot_runner.py --db data/trend_state.db --interval 4h --params deploy/trend_params.json
 
 Varios bots con nombre propio (deploy/bots.json): --bot ID toma de ese archivo la base, la temporalidad, los pares,
-los parámetros y el nombre que antepone a las alertas. Así corre "Tortuga 55" (diario, cripto + oro PAXG):
+los parámetros y el nombre que antepone a las alertas. Así corre "Tortuga 30" (diario, cripto + oro PAXG):
   python bot_runner.py --env-file .env --bot tortuga --log-file logs/bot-tortuga.log
 
 Uso en el VPS:
@@ -207,14 +207,18 @@ class BotRunner:
             ind_last = q.compute_indicators(df, self.p).iloc[-1]
             self._handle_events(self.sm.apply_trailing(symbol, last["time"], float(last["high"]),
                                                        float(last["low"]), float(ind_last["atr14"])))
-            # Filtro diario dado la vuelta (trend_exit_on_filter): salida a mercado.
+            # Reglas de cierre encendidas (filtro diario, canal, media, sin empuje): salida a mercado.
             for pos in self.sm.positions(symbol):
-                if q.trend_exit_signal({k: float(ind_last[k]) for k in q.INDICATOR_KEYS}, pos["side"], self.p):
+                held = int((pd.Timestamp(last["time"]) - pd.Timestamp(pos["opened_at"])) /
+                           pd.Timedelta(milliseconds=self.step)) + 1
+                reason = q.trend_exit_reason({k: float(ind_last[k]) for k in q.INDICATOR_KEYS}, pos["side"], self.p,
+                                             pos["entry_price"], held)
+                if reason:
                     try:
                         px = float(self.price_source(symbol))
                     except Exception:
                         px = float(last["close"])
-                    ev = self.sm.close_position(pos["id"], px, "SIGNAL_EXIT", bar_close_iso)
+                    ev = self.sm.close_position(pos["id"], px, reason, bar_close_iso)
                     self._handle_events([{"event": "CLOSE", **ev}])
         self._flush_status_alerts()
 

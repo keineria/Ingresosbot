@@ -61,12 +61,16 @@ class TestBotsFile(unittest.TestCase):
         self.assertEqual((cfg.interval, cfg.db_path, cfg.initial_balance), ("1d", "data/tortuga_state.db", 500.0))
         self.assertIn("PAXGUSDT", cfg.symbols)
         self.assertEqual((p.strategy, p.donchian_len, p.trend_sl_atr_mult, p.trail_atr_mult, p.daily_sma_len),
-                         ("trend", 55, 3.0, 5.0, 200))
-        self.assertFalse(p.trend_allow_short)
+                         ("trend", 30, 3.0, 5.0, 200))
+        # Desde el 30-oct-2026 (docs/REACTIVAR.md): ADX >= 20 y cortos en paper.
+        self.assertEqual((p.trend_min_adx, p.trend_allow_short, p.max_leverage), (20.0, True, 1.0))
         # Trend Rider en el panel = lo mismo que su servicio systemd (4h, su base, sus parámetros).
         cfg, p = bot_settings(find_bot("trend", ROOT / "deploy" / "bots.json"))
         self.assertEqual((cfg.interval, cfg.db_path, p.donchian_len, p.trail_atr_mult), ("4h", "data/trend_state.db", 20, 5.0))
-        self.assertEqual(cfg.symbols, ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+        self.assertEqual(len(cfg.symbols), 12)
+        self.assertEqual(cfg.symbols[:3], ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+        self.assertIn("PAXGUSDT", cfg.symbols)
+        self.assertEqual((p.trend_min_adx, p.max_position_pct, p.trend_allow_short), (20.0, 30.0, False))
         # Nathalia (desde el 30-oct-2026): rupturas 4h en 7 pares, cuenta nueva de 500 USD, todo fijo en bots.json.
         cfg, p = bot_settings(find_bot("oficial", ROOT / "deploy" / "bots.json"))
         self.assertEqual(cfg.symbols, ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"])
@@ -168,7 +172,7 @@ class TestMultiBotPanel(unittest.TestCase):
                          ("Tortuga 55", "1d", 510.0, 2.0, 1))
         self.assertEqual(t["how"], ["regla"])
         s = self.call("/api/state?bot=tortuga")[1]
-        self.assertEqual((s["bot"]["name"], s["config"]["interval"], s["config"]["donchian_len"]), ("Tortuga 55", "1d", 55))
+        self.assertEqual((s["bot"]["name"], s["config"]["interval"], s["config"]["donchian_len"]), ("Tortuga 55", "1d", 30))
         self.assertEqual(s["account"]["balance"], 510.0)
         self.assertEqual(self.call("/api/state")[1]["bot"]["id"], "oficial")
         self.assertEqual(self.call("/api/state?bot=nadie")[0], 404)
@@ -185,7 +189,7 @@ class TestMultiBotPanel(unittest.TestCase):
         l2 = scan["symbols"]["BTCUSDT"]["layer_2"]
         self.assertEqual((scan["symbols"]["BTCUSDT"]["decision"], l2["strategy"]), ("LONG", "trend"))
         self.assertTrue(all(l2["breakout_long_checks"].values()))
-        self.assertIn("breakout_close_gt_max55", l2["breakout_long_checks"])
+        self.assertIn("breakout_close_gt_max30", l2["breakout_long_checks"])
 
 
     def test_power_off_with_close_positions(self):

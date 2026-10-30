@@ -55,10 +55,17 @@ Trailing stop     = al cierre de cada vela:
 | `trend_allow_short` | `false` | `true` solo en Futuros |
 | `daily_sma_len` | `0` (en `trend_params.json`: `200`) | Filtro diario: LONG solo si el cierre diario de AYER está sobre la SMA de N días |
 | `trend_exit_on_filter` | `false` | `true`: cerrar a mercado cuando el filtro diario se da la vuelta |
+| `trend_min_adx` | `0` (apagado) | Solo entra si el ADX14 es al menos X: evita las rupturas falsas del mercado lateral |
+| `max_position_pct` | `0` (apagado) | Tope por posición en % del balance (más bajo que el 85% total) para tener varias monedas a la vez |
+| `range_entry` | `false` | Modo lateral: sin ruptura, ADX14 < `range_max_adx` (20), cierre bajo la banda de Bollinger inferior (`range_bb_len` 20, `range_bb_std` 2) y RSI14 ≤ `range_rsi_long_max` (35): compra el rebote con SL `range_sl_atr_mult` y TP fijo `range_tp_atr_mult` (1,5 ATR), sin trailing. Con `trend_allow_short` también vende en la banda superior (RSI ≥ `range_rsi_short_min`) |
+
+Hay más filtros y salidas opcionales (volumen, rango de volatilidad, empuje de la ruptura, salidas por canal, EMA o vela sin avance, trailing ajustado); todos vienen apagados y están descritos en `Params` de `quant_core_engine.py`.
 
 `trend_entry = "daily_filter"` entra solo con el filtro diario (sin ruptura). El filtro usa siempre el día anterior ya cerrado, para no mirar el futuro, y el bot descarga las velas necesarias (205 días) cuando está activo.
 
 **Configuración recomendada para paper** (`deploy/trend_params.json`, validada con datos de 2024-2026 en [docs/LAB_2024_2026.md](../docs/LAB_2024_2026.md)): 4h, ruptura de Donchian 20, SL inicial 2 ATR, trailing 5 ATR y filtro SMA200 diaria.
+
+**Desde el 30-oct-2026** ([docs/REACTIVAR.md](../docs/REACTIVAR.md), datos 2022-2026): Keiner usa además `trend_min_adx: 20` y `max_position_pct: 30` sobre 12 monedas con oro; Celeste (Tortuga, velas diarias) usa Donchian 30, `trend_min_adx: 20` y `trend_allow_short: true` (cortos solo en paper; con dinero real exigen Futuros 1x).
 
 Temporalidad recomendada: **4h**, porque da pocas operaciones, poca comisión y menos ruido. En 1h también funcionó en la investigación, pero paga unas 13 veces más comisiones.
 
