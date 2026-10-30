@@ -65,6 +65,16 @@ VARIANTS = {
                             {"trend_allow_short": True, "range_entry": True, "range_rsi_short_min": 101}),
         "u12_all3": ("12 monedas + las 3", U12, {"max_position_pct": 30, "trend_allow_short": True, "range_entry": True}),
         "u12_short": ("12 monedas + corto", U12, {"max_position_pct": 30, "trend_allow_short": True}),
+        # Ronda 3: el corto ganó en 2022 pero perdió en mercado lateral; el ADX filtra justo ese caso.
+        "short_adx": ("Corto + ADX ≥ 20", CORE, {"trend_allow_short": True, "trend_min_adx": 20}),
+        "short_adx25": ("Corto + ADX ≥ 25", CORE, {"trend_allow_short": True, "trend_min_adx": 25}),
+        "short_adx_stale": ("Corto + ADX ≥ 20 + fuera si a las 6 velas no avanza", CORE,
+                            {"trend_allow_short": True, "trend_min_adx": 20, "trend_stale_bars": 6}),
+        "u12_adx_short": ("12 monedas + ADX ≥ 20 + corto", U12,
+                          {"max_position_pct": 30, "trend_min_adx": 20, "trend_allow_short": True}),
+        "u12_adx25_short": ("12 monedas + ADX ≥ 25 + corto", U12,
+                            {"max_position_pct": 30, "trend_min_adx": 25, "trend_allow_short": True}),
+        "u12_adx25": ("12 monedas + ADX ≥ 25", U12, {"max_position_pct": 30, "trend_min_adx": 25}),
         "u12_range": ("12 monedas + lateral", U12, {"max_position_pct": 30, "range_entry": True}),
     },
     "tortuga": {
@@ -87,6 +97,17 @@ VARIANTS = {
                             {"trend_allow_short": True, "range_entry": True, "range_rsi_short_min": 101}),
         "u12_all3": ("12 monedas + las 3", U12, {"max_position_pct": 30, "trend_allow_short": True, "range_entry": True}),
         "u12_short": ("12 monedas + corto", U12, {"max_position_pct": 30, "trend_allow_short": True}),
+        # Ronda 3: combinar lo que funcionó (ruptura de 30 días, lateral con TP 2 ATR, corto, ADX).
+        "d30_rtp2": ("30 días + lateral TP 2 ATR", TORTUGA,
+                     {"donchian_len": 30, "range_entry": True, "range_tp_atr_mult": 2.0, "range_sl_atr_mult": 2.0}),
+        "d30_short": ("30 días + corto", TORTUGA, {"donchian_len": 30, "trend_allow_short": True}),
+        "d30_adx": ("30 días + ADX ≥ 20", TORTUGA, {"donchian_len": 30, "trend_min_adx": 20}),
+        "short_adx": ("Corto + ADX ≥ 20", TORTUGA, {"trend_allow_short": True, "trend_min_adx": 20}),
+        "d30_short_adx": ("30 días + corto + ADX ≥ 20", TORTUGA,
+                          {"donchian_len": 30, "trend_allow_short": True, "trend_min_adx": 20}),
+        "d30_all_rtp2": ("30 días + corto + lateral solo compras TP 2 ATR", TORTUGA,
+                         {"donchian_len": 30, "trend_allow_short": True, "range_entry": True, "range_rsi_short_min": 101,
+                          "range_tp_atr_mult": 2.0, "range_sl_atr_mult": 2.0}),
     },
 }
 INTERVAL = {"trend": "4h", "tortuga": "1d"}
