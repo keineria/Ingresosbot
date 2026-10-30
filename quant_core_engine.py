@@ -115,6 +115,17 @@ class Params:
     trend_stale_bars: int = 0          # tras N velas, si el cierre sigue en o bajo la entrada: fuera (trade sin empuje)
     trend_tight_after_r: float = 0.0   # al ganar X veces el riesgo inicial (R), el trailing se ajusta a...
     trend_tight_trail_atr: float = 2.5  # ...este múltiplo de ATR (asegura más ganancia en las subidas largas)
+    # Modo lateral opcional (rebote al centro del rango) cuando NO hay ruptura. Apagado por defecto.
+    # LONG: ADX14 < range_max_adx, Close < banda de Bollinger inferior y RSI14 <= range_rsi_long_max.
+    # SHORT (solo con trend_allow_short): espejo en la banda superior. Salida con SL y TP fijos en ATR, sin trailing.
+    range_entry: bool = False
+    range_max_adx: float = 20.0
+    range_bb_len: int = 20
+    range_bb_std: float = 2.0
+    range_rsi_long_max: float = 35.0
+    range_rsi_short_min: float = 65.0
+    range_sl_atr_mult: float = 1.5
+    range_tp_atr_mult: float = 1.5
 
     @property
     def min_candles(self) -> int:
@@ -266,6 +277,10 @@ def compute_indicators(df: pd.DataFrame, p: Params) -> pd.DataFrame:
     out["ext_atr"] = ((out["close"] - out["ema20"]) / out["atr14"]).where(out["atr14"] > 0).fillna(0.0)
     out["breakout_atr"] = ((out["close"] - out["donchian_high"]) / out["atr14"]).where(out["atr14"] > 0).fillna(0.0)
     out["adx14"] = adx(out["high"], out["low"], out["close"], p.atr_len)
+    # Bandas de Bollinger del modo lateral (SMA ± k desviaciones de la vela actual).
+    mid = out["close"].rolling(p.range_bb_len).mean()
+    sd = out["close"].rolling(p.range_bb_len).std(ddof=0)
+    out["bb_mid"], out["bb_lower"], out["bb_upper"] = mid, mid - p.range_bb_std * sd, mid + p.range_bb_std * sd
     # Canal de salida (velas ANTERIORES). 0 = apagado o sin historia: no dispara.
     n_exit = max(1, p.trend_exit_low_len)
     out["exit_low"] = out["low"].rolling(n_exit).min().shift(1).fillna(0.0) if p.trend_exit_low_len else 0.0
@@ -275,7 +290,7 @@ def compute_indicators(df: pd.DataFrame, p: Params) -> pd.DataFrame:
 
 INDICATOR_KEYS = ("close", "ema20", "ema50", "ema200", "rsi14", "atr14", "ema20_slope_pct",
                   "donchian_high", "donchian_low", "daily_trend", "vol_ratio", "atr_rank", "ext_atr",
-                  "breakout_atr", "adx14", "exit_low", "exit_high")
+                  "breakout_atr", "adx14", "exit_low", "exit_high", "bb_mid", "bb_lower", "bb_upper")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -623,6 +638,23 @@ def trend_regime(ind: dict, p: Params) -> dict:
     pullback_long = use_pullback and base["signal"] == "LONG" and daily_long
     pullback_short = use_pullback and base["signal"] == "SHORT" and daily_short and p.trend_allow_short
 
+    # Modo lateral: solo si no hay ruptura ni retroceso. ADX bajo = sin tendencia; se compra el extremo del rango.
+    range_long_checks: dict = {}
+    range_short_checks: dict = {}
+    if p.range_entry:
+        adx_ok = float(ind.get("adx14") or 0.0) < p.range_max_adx and float(ind.get("adx14") or 0.0) > 0
+        lo, up = ind.get("bb_lower"), ind.get("bb_upper")
+        rsi_v = float(ind["rsi14"])
+        range_long_checks = {f"range_adx_lt_{p.range_max_adx:g}": adx_ok,
+                             "range_close_lt_bb_lower": lo is not None and not math.isnan(lo) and close < lo,
+                             f"range_rsi_le_{p.range_rsi_long_max:g}": rsi_v <= p.range_rsi_long_max}
+        range_short_checks = {f"range_adx_lt_{p.range_max_adx:g}": adx_ok,
+                              "range_close_gt_bb_upper": up is not None and not math.isnan(up) and close > up,
+                              f"range_rsi_ge_{p.range_rsi_short_min:g}": rsi_v >= p.range_rsi_short_min,
+                              "short_enabled": p.trend_allow_short}
+    range_long = bool(range_long_checks) and all(range_long_checks.values())
+    range_short = bool(range_short_checks) and all(range_short_checks.values())
+
     trigger = None
     if breakout_long or pullback_long:
         signal, trigger = "LONG", ("daily_filter" if p.trend_entry == "daily_filter" else
@@ -630,6 +662,10 @@ def trend_regime(ind: dict, p: Params) -> dict:
     elif breakout_short or pullback_short:
         signal, trigger = "SHORT", ("daily_filter" if p.trend_entry == "daily_filter" else
                                     "breakout" if breakout_short else "pullback")
+    elif range_long:
+        signal, trigger = "LONG", "range"
+    elif range_short:
+        signal, trigger = "SHORT", "range"
     else:
         signal = "WAIT / NO_TRADE"
 
@@ -639,6 +675,10 @@ def trend_regime(ind: dict, p: Params) -> dict:
             blocking += ["TREND.LONG." + k for k, v in long_checks.items() if not v]
             if p.trend_allow_short:
                 blocking += ["TREND.SHORT." + k for k, v in short_checks.items() if not v]
+        if p.range_entry:
+            blocking += ["RANGE.LONG." + k for k, v in range_long_checks.items() if not v]
+            if p.trend_allow_short:
+                blocking += ["RANGE.SHORT." + k for k, v in range_short_checks.items() if not v]
         if use_pullback:
             blocking += ["PULLBACK." + b for b in base["blocking_filters"]]
             if base["signal"] == "LONG" and not daily_long:
@@ -650,6 +690,8 @@ def trend_regime(ind: dict, p: Params) -> dict:
                              donchian_low=None if dl is None else round(float(dl), 8))
     out.update(strategy="trend", entry_mode=p.trend_entry, entry_trigger=trigger, signal=signal,
                breakout_long_checks=long_checks, breakout_short_checks=short_checks, blocking_filters=blocking)
+    if p.range_entry:
+        out.update(range_long_checks=range_long_checks, range_short_checks=range_short_checks)
     return out
 
 
@@ -787,6 +829,17 @@ def trend_risk_guardian(side: str, entry: float, atr_value: float, balance: floa
     return r
 
 
+def range_risk_guardian(side: str, entry: float, atr_value: float, balance: float,
+                        risk_pct: float, p: Params) -> dict:
+    """Capa 3 del modo lateral: mismo tamaño por riesgo, SL a range_sl_atr_mult ATR y TP fijo a range_tp_atr_mult ATR
+    (el centro aproximado del rango). Sin trailing; el Break-Even se coloca en el propio TP, así que no actúa."""
+    r = atr_risk_guardian(side, entry, atr_value, balance, risk_pct,
+                          replace(p, sl_atr_mult=p.range_sl_atr_mult, tp_atr_mult=p.range_tp_atr_mult,
+                                  be_atr_mult=p.range_tp_atr_mult))
+    r.update(exit_mode="range_fixed")
+    return r
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # ORQUESTADOR
 # ════════════════════════════════════════════════════════════════════════════
@@ -812,7 +865,8 @@ def _manual_indicators(m: dict, p: Params) -> dict:
     else:
         raise ValueError("Modo manual: falta 'ema20_prev3' o 'ema20_slope_pct'.")
     for k in ("donchian_high", "donchian_low", "daily_trend",      # solo los necesita el perfil "trend"
-              "vol_ratio", "atr_rank", "ext_atr", "breakout_atr", "adx14", "exit_low", "exit_high"):
+              "vol_ratio", "atr_rank", "ext_atr", "breakout_atr", "adx14", "exit_low", "exit_high",
+              "bb_mid", "bb_lower", "bb_upper"):
         if k in m:
             ind[k] = float(m[k])
     return ind
@@ -864,7 +918,8 @@ def run_engine(account: dict, candles: pd.DataFrame | None = None, manual: dict 
 
     # CAPA 3
     entry = float(entry_price) if entry_price is not None else ind["close"]
-    guardian = trend_risk_guardian if p.strategy == "trend" else atr_risk_guardian
+    is_range = p.strategy == "trend" and mr.get("entry_trigger") == "range"
+    guardian = range_risk_guardian if is_range else trend_risk_guardian if p.strategy == "trend" else atr_risk_guardian
     risk = guardian(mr["signal"], entry, ind["atr14"], state.balance, cb["risk_pct"], p)
     result["layer_3_atr_risk_guardian"] = risk
     if risk["below_min_notional"]:
@@ -888,7 +943,9 @@ def run_engine(account: dict, candles: pd.DataFrame | None = None, manual: dict 
         "risk_mode": cb["status"],
         "client_tag": f"qce-{mr['regime'].lower()}",
     }
-    if p.strategy == "trend":
+    if is_range:
+        result["order"].update(break_even=None, client_tag="qce-trend-range")
+    elif p.strategy == "trend":
         # Sin TP ni Break-Even: el ejecutor debe mover el stop cuando llegue el evento "trailing_stop".
         result["order"].update(
             take_profit=None, break_even=None, client_tag=f"qce-trend-{mr['entry_trigger']}",

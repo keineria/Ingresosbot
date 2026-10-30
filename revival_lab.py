@@ -55,7 +55,17 @@ VARIANTS = {
         "u12_d30": ("12 monedas, ruptura de 30 velas", U12, {"max_position_pct": 30, "donchian_len": 30}),
         "u12_tight": ("12 monedas, trailing 2,5 ATR tras ganar 2R", U12,
                       {"max_position_pct": 30, "trend_tight_after_r": 2.0}),
-        "short_info": ("SOLO INFORMATIVO: también vende en corto (Futuros 1x)", CORE, {"trend_allow_short": True}),
+        "short": ("Bajista: también vende en corto (Futuros 1x)", CORE, {"trend_allow_short": True}),
+        "range": ("Lateral: rebote en banda inferior (ADX < 20)", CORE, {"range_entry": True}),
+        "range_tp2": ("Lateral con TP 2 ATR y SL 2 ATR", CORE,
+                      {"range_entry": True, "range_tp_atr_mult": 2.0, "range_sl_atr_mult": 2.0}),
+        "range_adx25": ("Lateral con ADX < 25", CORE, {"range_entry": True, "range_max_adx": 25}),
+        "all3": ("Las 3: alcista + corto + lateral (largo y corto)", CORE, {"trend_allow_short": True, "range_entry": True}),
+        "all3_long_range": ("Alcista + corto en bajista + lateral solo compras", CORE,
+                            {"trend_allow_short": True, "range_entry": True, "range_rsi_short_min": 101}),
+        "u12_all3": ("12 monedas + las 3", U12, {"max_position_pct": 30, "trend_allow_short": True, "range_entry": True}),
+        "u12_short": ("12 monedas + corto", U12, {"max_position_pct": 30, "trend_allow_short": True}),
+        "u12_range": ("12 monedas + lateral", U12, {"max_position_pct": 30, "range_entry": True}),
     },
     "tortuga": {
         "base": ("Como está hoy (5 cripto + oro)", TORTUGA, {}),
@@ -68,10 +78,20 @@ VARIANTS = {
         "u23_d30": ("23 monedas, ruptura de 30 días", U23, {"max_position_pct": 25, "donchian_len": 30}),
         "u12_d30_sma100": ("12 monedas, 30 días, SMA100", U12,
                            {"max_position_pct": 30, "donchian_len": 30, "daily_sma_len": 100}),
-        "short_info": ("SOLO INFORMATIVO: también vende en corto (Futuros 1x)", TORTUGA, {"trend_allow_short": True}),
+        "short": ("Bajista: también vende en corto (Futuros 1x)", TORTUGA, {"trend_allow_short": True}),
+        "range": ("Lateral: rebote en banda inferior (ADX < 20)", TORTUGA, {"range_entry": True}),
+        "range_tp2": ("Lateral con TP 2 ATR y SL 2 ATR", TORTUGA,
+                      {"range_entry": True, "range_tp_atr_mult": 2.0, "range_sl_atr_mult": 2.0}),
+        "all3": ("Las 3: alcista + corto + lateral", TORTUGA, {"trend_allow_short": True, "range_entry": True}),
+        "all3_long_range": ("Alcista + corto en bajista + lateral solo compras", TORTUGA,
+                            {"trend_allow_short": True, "range_entry": True, "range_rsi_short_min": 101}),
+        "u12_all3": ("12 monedas + las 3", U12, {"max_position_pct": 30, "trend_allow_short": True, "range_entry": True}),
+        "u12_short": ("12 monedas + corto", U12, {"max_position_pct": 30, "trend_allow_short": True}),
     },
 }
 INTERVAL = {"trend": "4h", "tortuga": "1d"}
+ALL = "Todo 2022→hoy"
+REGIMES = ("BULL_EXPANSION", "BEAR_DISTRIBUTION", "CHOP_RANGE", "EXHAUSTION_CLIMAX")
 
 
 def windows(last: pd.Timestamp) -> list[tuple[str, str, str | None]]:
@@ -80,7 +100,7 @@ def windows(last: pd.Timestamp) -> list[tuple[str, str, str | None]]:
             ("2024", "2024-01-01", "2025-01-01"), ("2025", "2025-01-01", "2026-01-01"),
             ("Últ. 12 meses", str((last - pd.DateOffset(months=12)).date()), None),
             ("Últ. 3 meses", str((last - pd.DateOffset(months=3)).date()), None),
-            ("Todo 2022→hoy", "2022-01-01", None)]
+            (ALL, "2022-01-01", None)]
 
 
 def load(csv_dir: Path, symbols: list[str], interval: str) -> dict[str, pd.DataFrame]:
@@ -103,12 +123,16 @@ def _run(job: tuple) -> dict:
     if end:
         data = {s: d[d.time < pd.Timestamp(end, tz="UTC")] for s, d in data.items()}
     data = {s: d for s, d in data.items() if len(d) >= p.min_candles + 2}
-    rep = bt.run_portfolio_backtest(data, p, bt.BacktestConfig(initial_balance=balance), trade_from=start)["report"]
+    res = bt.run_portfolio_backtest(data, p, bt.BacktestConfig(initial_balance=balance), trade_from=start)
+    rep, trades = res["report"], res["trades"]
     months = max((pd.Timestamp(rep["period"]["to"]) - pd.Timestamp(rep["period"]["from"])).days / 30.44, 0.1)
     return {"bot": bot, "variant": vid, "desc": desc, "window": wname, "return_pct": rep["net_return_pct"],
             "dd_pct": rep["max_drawdown_pct"], "trades": rep["trades"], "trades_month": round(rep["trades"] / months, 2),
             "win_rate": rep["win_rate_pct"], "pf": rep["profit_factor"], "fees": rep["total_fees_usd"],
-            "skipped": rep["skipped_by_capital"], "by_symbol": rep["by_symbol"], "symbols": len(data)}
+            "skipped": rep["skipped_by_capital"], "by_symbol": rep["by_symbol"], "symbols": len(data),
+            "by_regime": {rg: round(sum(t["pnl_usd"] for t in trades if t["regime"] == rg), 2)
+                          for rg in sorted({t["regime"] for t in trades if t["regime"]})},
+            "by_side": {sd: round(sum(t["pnl_usd"] for t in trades if t["side"] == sd), 2) for sd in ("LONG", "SHORT")}}
 
 
 def markdown(rows: list[dict], bot: str) -> str:
@@ -117,7 +141,8 @@ def markdown(rows: list[dict], bot: str) -> str:
     wins = list(dict.fromkeys(df.window))
     lines = [f"### {'Keiner · Trend Rider (4h)' if bot == 'trend' else 'Celeste · Tortuga 55 (1d)'}", "",
              "Retorno % · caída máx. % · operaciones por ventana (cada ventana empieza con el mismo balance).", "",
-             "| Variante | " + " | ".join(wins) + " | Ops/mes (12m) |", "|---|" + "---|" * (len(wins) + 1)]
+             "| Variante | " + " | ".join(wins) + " | Ops/mes (12m) | USD largos / cortos (todo) |",
+             "|---|" + "---|" * (len(wins) + 2)]
     for vid in VARIANTS[bot]:
         g = df[df.variant == vid].set_index("window")
         if g.empty:
@@ -125,7 +150,16 @@ def markdown(rows: list[dict], bot: str) -> str:
         cells = [f"{g.loc[w, 'return_pct']:+.1f} · {g.loc[w, 'dd_pct']:.1f} · {g.loc[w, 'trades']}" if w in g.index
                  else "—" for w in wins]
         tm = g.loc["Últ. 12 meses", "trades_month"] if "Últ. 12 meses" in g.index else float("nan")
-        lines.append(f"| **{vid}** {g['desc'].iloc[0]} | " + " | ".join(cells) + f" | {tm:.1f} |")
+        side = g.loc[ALL, "by_side"] if ALL in g.index else {}
+        lines.append(f"| **{vid}** {g['desc'].iloc[0]} | " + " | ".join(cells) + f" | {tm:.1f} | "
+                     f"{side.get('LONG', 0):+.0f} / {side.get('SHORT', 0):+.0f} |")
+    lines += ["", "Resultado (USD, todo el periodo) según el régimen del mercado al entrar:", "",
+              "| Variante | " + " | ".join(REGIMES) + " |", "|---|" + "---|" * len(REGIMES)]
+    for vid in VARIANTS[bot]:
+        g = df[(df.variant == vid) & (df.window == ALL)]
+        if not g.empty:
+            br = g.iloc[0]["by_regime"]
+            lines.append(f"| {vid} | " + " | ".join(f"{br.get(r, 0):+.0f}" for r in REGIMES) + " |")
     return "\n".join(lines) + "\n"
 
 
