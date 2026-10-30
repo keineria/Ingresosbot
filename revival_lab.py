@@ -33,13 +33,21 @@ U23 = U12 + ["DOTUSDT", "BCHUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT", "SUIUSDT",
 # Parámetros actuales de cada bot. Se leen de deploy/ junto al script o, si se corre una copia (p. ej. en data/lab4
 # del VPS), de deploy/ en la carpeta de trabajo.
 _DEPLOY = next((d for d in (Path(__file__).parent / "deploy", Path.cwd() / "deploy") if d.is_dir()), Path("deploy"))
+# Monedas que ningún bot usa todavía: sirven para ver si la regla funciona fuera de las monedas elegidas.
+ALT = ["DOTUSDT", "BCHUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT", "SUIUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "INJUSDT",
+       "FETUSDT", "XLMUSDT", "HBARUSDT", "ETCUSDT", "FILUSDT", "ICPUSDT", "AAVEUSDT", "TONUSDT", "SHIBUSDT", "PEPEUSDT",
+       "RENDERUSDT", "SEIUSDT", "TIAUSDT", "WLDUSDT", "ENAUSDT"]
+EVERY = U12 + ALT
 TREND_BASE = json.loads((_DEPLOY / "trend_params.json").read_text(encoding="utf-8"))
 TORTUGA_BASE = json.loads((_DEPLOY / "tortuga_params.json").read_text(encoding="utf-8"))
 
-# id -> (descripción, pares, cambios sobre los parámetros actuales del bot)
+# id -> (descripción, pares, cambios sobre los parámetros actuales del bot). Desde el 30-oct-2026 (PR #20) los
+# parámetros actuales ya traen ADX ≥ 20 (y en Tortuga, 30 días y cortos): las variantes de las rondas 1-4 que no los
+# fijan miden ahora "actual + cambio", no "Trend Rider original + cambio" (ver docs/REACTIVAR.md).
 VARIANTS = {
     "trend": {
-        "base": ("Como está hoy (BTC ETH SOL)", CORE, {}),
+        "base": ("Como está hoy (12 monedas + oro, ADX ≥ 20)", U12, {}),
+        "core": ("Configuración actual solo en BTC ETH SOL", CORE, {}),
         "u12": ("12 monedas + oro, tope 30% por posición", U12, {"max_position_pct": 30}),
         "u23": ("23 monedas + oro, tope 25% por posición", U23, {"max_position_pct": 25}),
         "sma100": ("Filtro diario SMA100 en vez de SMA200", CORE, {"daily_sma_len": 100}),
@@ -75,10 +83,15 @@ VARIANTS = {
         "u12_adx25_short": ("12 monedas + ADX ≥ 25 + corto", U12,
                             {"max_position_pct": 30, "trend_min_adx": 25, "trend_allow_short": True}),
         "u12_adx25": ("12 monedas + ADX ≥ 25", U12, {"max_position_pct": 30, "trend_min_adx": 25}),
+        # Ronda 5: otras monedas (fuera de las elegidas) con la regla aplicada.
+        "u23_adx": ("23 monedas + ADX ≥ 20, tope 25%", U23, {"max_position_pct": 25, "trend_min_adx": 20}),
+        "alt_adx": ("Solo monedas nuevas (25) + ADX ≥ 20, tope 25%", ALT, {"max_position_pct": 25, "trend_min_adx": 20}),
+        "every_adx": ("Las 37 monedas + ADX ≥ 20, tope 20%", EVERY, {"max_position_pct": 20, "trend_min_adx": 20}),
+        "every_adx25": ("Las 37 monedas + ADX ≥ 25, tope 20%", EVERY, {"max_position_pct": 20, "trend_min_adx": 25}),
         "u12_range": ("12 monedas + lateral", U12, {"max_position_pct": 30, "range_entry": True}),
     },
     "tortuga": {
-        "base": ("Como está hoy (5 cripto + oro)", TORTUGA, {}),
+        "base": ("Como está hoy (30 días + corto + ADX, 5 cripto + oro)", TORTUGA, {}),
         "d20": ("Ruptura de 20 días", TORTUGA, {"donchian_len": 20}),
         "d30": ("Ruptura de 30 días", TORTUGA, {"donchian_len": 30}),
         "sma100": ("Filtro diario SMA100", TORTUGA, {"daily_sma_len": 100}),
@@ -108,6 +121,22 @@ VARIANTS = {
         "d30_all_rtp2": ("30 días + corto + lateral solo compras TP 2 ATR", TORTUGA,
                          {"donchian_len": 30, "trend_allow_short": True, "range_entry": True, "range_rsi_short_min": 101,
                           "range_tp_atr_mult": 2.0, "range_sl_atr_mult": 2.0}),
+        # Ronda 5: otras monedas y revisión cada 4 horas (máximo de 30 días = 180 velas de 4h; ATR de 4h ≈ ATR diario / 2,45).
+        "u12_d30_short_adx": ("12 monedas, 30 días + corto + ADX, tope 30%", U12,
+                              {"donchian_len": 30, "trend_allow_short": True, "trend_min_adx": 20, "max_position_pct": 30}),
+        "alt_d30_short_adx": ("Solo monedas nuevas (25), 30 días + corto + ADX, tope 25%", ALT,
+                              {"donchian_len": 30, "trend_allow_short": True, "trend_min_adx": 20, "max_position_pct": 25}),
+        "every_d30_short_adx": ("Las 37 monedas, 30 días + corto + ADX, tope 20%", EVERY,
+                                {"donchian_len": 30, "trend_allow_short": True, "trend_min_adx": 20, "max_position_pct": 20}),
+        "h4_d30_short_adx": ("Revisa cada 4h: 30 días + corto + ADX (SL 7,5 / trail 12 ATR de 4h)", TORTUGA,
+                             {"_interval": "4h", "donchian_len": 180, "trend_sl_atr_mult": 7.5, "trail_atr_mult": 12.0,
+                              "trend_allow_short": True, "trend_min_adx": 20}),
+        "h4_d30_short_adx_sl5": ("Revisa cada 4h, SL 5 / trail 8 ATR de 4h", TORTUGA,
+                                 {"_interval": "4h", "donchian_len": 180, "trend_sl_atr_mult": 5.0, "trail_atr_mult": 8.0,
+                                  "trend_allow_short": True, "trend_min_adx": 20}),
+        "h4_d30_short_adx25": ("Revisa cada 4h, ADX ≥ 25 de 4h", TORTUGA,
+                               {"_interval": "4h", "donchian_len": 180, "trend_sl_atr_mult": 7.5, "trail_atr_mult": 12.0,
+                                "trend_allow_short": True, "trend_min_adx": 25}),
     },
 }
 INTERVAL = {"trend": "4h", "tortuga": "1d"}
@@ -119,6 +148,7 @@ def windows(last: pd.Timestamp) -> list[tuple[str, str, str | None]]:
     """(nombre, desde, hasta). Las ventanas no comparten dinero: cada una empieza con el balance inicial."""
     return [("2022 (bajista)", "2022-01-01", "2023-01-01"), ("2023", "2023-01-01", "2024-01-01"),
             ("2024", "2024-01-01", "2025-01-01"), ("2025", "2025-01-01", "2026-01-01"),
+            ("2026 hasta hoy", "2026-01-01", None),
             ("Últ. 12 meses", str((last - pd.DateOffset(months=12)).date()), None),
             ("Últ. 3 meses", str((last - pd.DateOffset(months=3)).date()), None),
             (ALL, "2022-01-01", None)]
@@ -139,8 +169,10 @@ def _run(job: tuple) -> dict:
     bot, vid, wname, start, end, csv_dir, balance = job
     desc, symbols, changes = VARIANTS[bot][vid]
     base = TREND_BASE if bot == "trend" else TORTUGA_BASE
+    changes = dict(changes)
+    interval = changes.pop("_interval", INTERVAL[bot])     # p. ej. Tortuga revisada cada 4 horas
     p = q.Params(**{**base, **changes})
-    data = load(Path(csv_dir), symbols, INTERVAL[bot])
+    data = load(Path(csv_dir), symbols, interval)
     if end:
         data = {s: d[d.time < pd.Timestamp(end, tz="UTC")] for s, d in data.items()}
     data = {s: d for s, d in data.items() if len(d) >= p.min_candles + 2}
