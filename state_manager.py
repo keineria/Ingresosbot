@@ -388,11 +388,11 @@ class StateManager:
             peak = pos["trail_peak"] if pos["trail_peak"] is not None else pos["entry_price"]
             if pos["side"] == "LONG":
                 peak = max(peak, h)
-                new_sl = q.floor_to_step(peak - k * atr_value, self.p.price_tick)
+                new_sl = q.floor_to_step(peak - k * atr_value, q.effective_tick(pos["entry_price"], self.p.price_tick))
                 better = new_sl > pos["stop_loss"]
             else:
                 peak = min(peak, l)
-                new_sl = q.ceil_to_step(peak + k * atr_value, self.p.price_tick)
+                new_sl = q.ceil_to_step(peak + k * atr_value, q.effective_tick(pos["entry_price"], self.p.price_tick))
                 better = new_sl < pos["stop_loss"]
             self.conn.execute("UPDATE open_positions SET trail_peak = ?, stop_loss = ? WHERE id = ?",
                               (peak, new_sl if better else pos["stop_loss"], pos["id"]))
