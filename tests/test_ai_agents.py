@@ -771,7 +771,7 @@ class TestBotCoverage(unittest.TestCase):
     def test_defaults_cover_three_bots(self):
         s = ag.AgentSettings()
         self.assertEqual([(b.key, b.full) for b in s.bots],
-                         [("trend_state", True), ("tortuga_state", True), ("trading_state", False)])
+                         [("trend_state", True), ("tortuga_state", True), ("nathalia_state", False)])
         self.assertEqual(list(s.profiles()), ["trend_params_4h", "tortuga_params_1d"])
         tortuga_lab = s.lab_profiles[1]
         self.assertEqual((tortuga_lab.interval, len(tortuga_lab.symbols)), ("1d", 21))

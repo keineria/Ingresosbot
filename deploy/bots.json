@@ -1,21 +1,21 @@
 [
   {
     "id": "oficial",
-    "name": "Bot Oficial",
+    "name": "Rupturas 7 monedas",
     "trader": "Nathalia",
     "service": "ingresosbot",
-    "db": "data/trading_state.db",
-    "interval": null,
+    "db": "data/nathalia_state.db",
+    "interval": "4h",
     "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"],
-    "params": null,
-    "balance": null,
-    "summary": "Las reglas oficiales de las 3 Skills: compra retrocesos dentro de una tendencia alcista y sale con TP fijo o Break-Even.",
+    "params": "deploy/nathalia_params.json",
+    "balance": 500,
+    "summary": "Desde el 30-oct-2026: las reglas de rupturas de Trend Rider en velas de 4 horas, pero vigilando 7 monedas. Antes usaba las reglas oficiales (retroceso + RSI), que en 4 días perdieron un 2,9% y en el último año entre 22% y 50%.",
     "how": [
-      "Entra si el precio está sobre la EMA 200, la EMA 20 sobre la EMA 50 con pendiente > +0,2% y el RSI entre 46 y 64.",
-      "Stop loss a 1,6 ATR, take profit a 3,6 ATR y Break-Even al avanzar 1,5 ATR.",
-      "Arriesga 1,5% del balance por operación (0,75% tras 2 pérdidas seguidas)."
+      "Entra si el cierre supera el máximo de las 20 velas anteriores, está sobre la EMA 200 y el cierre diario de ayer está sobre su media de 200 días.",
+      "Stop loss inicial a 2 ATR; luego un trailing stop a 5 ATR del máximo que solo sube. Sin take profit fijo.",
+      "Solo compras (como en Binance Spot). Arriesga 1,5% del balance por operación, con el mismo Circuit Breaker (Capa 1)."
     ],
-    "backtest": "Con datos 2024-2026 y 500 USD en BTC, ETH y SOL perdió -12% (caída máx. 29%). Desde el 26-oct-2026 vigila también BNB, XRP, ADA y DOGE (sin backtest propio todavía). Sigue como referencia, no para dinero real."
+    "backtest": "Último año (oct-2025 a oct-2026) con 500 USD en BTC, ETH, SOL, BNB, XRP, ADA y DOGE: -3,8% con caída máx. 9,8%, mientras comprar y mantener perdía -48,8% y las reglas oficiales entre -22% y -50%. Cuenta nueva de 500 USD; su historial anterior queda guardado en data/trading_state.db."
   },
   {
     "id": "trend",
