@@ -60,6 +60,15 @@ class TestRangeMode(unittest.TestCase):
         self.assertIsNone(r["order"].get("trailing_stop"))
         self.assertAlmostEqual(r["order"]["take_profit"]["price"], 98.0)
 
+    def test_trend_short_survives_crash_atr(self):
+        # Desplome: ATR mayor que precio / trend_sl_atr_mult. El corto no usa TP; no debe fallar por el TP de relleno.
+        p = q.Params(strategy="trend", trend_sl_atr_mult=3.0, price_tick=0.0001)
+        r = q.trend_risk_guardian("SHORT", 1.0, 0.5, 500.0, 1.5, p)
+        self.assertAlmostEqual(r["stop_loss"], 2.5)
+        self.assertIsNone(r["take_profit"])
+        with self.assertRaises(ValueError):           # un LONG con SL <= 0 sí se rechaza
+            q.trend_risk_guardian("LONG", 1.0, 0.5, 500.0, 1.5, p)
+
     def test_backtest_runs_in_chop(self):
         df = q.demo_chop_range(1500, seed=3)
         p = q.Params(strategy="trend", range_entry=True, price_tick=0.0001)

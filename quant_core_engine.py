@@ -834,8 +834,11 @@ def trend_risk_guardian(side: str, entry: float, atr_value: float, balance: floa
     SL inicial a trend_sl_atr_mult ATR y salida por trailing stop: sin TP fijo ni Break-Even.
     El trailing lo mueve state_manager al cierre de cada vela: SL = máximo desde la entrada - trail_atr_mult ATR."""
     m = p.trend_sl_atr_mult
+    # TP y Break-Even no se usan aquí; se pasan de relleno a una distancia que nunca cae a <= 0 en un SHORT
+    # (en un desplome el ATR puede superar precio / m y el TP de relleno quedaría negativo).
+    filler = min(m, 0.5 * entry / atr_value) if entry > 0 and atr_value > 0 else m
     r = atr_risk_guardian(side, entry, atr_value, balance, risk_pct,
-                          replace(p, sl_atr_mult=m, tp_atr_mult=m, be_atr_mult=m))
+                          replace(p, sl_atr_mult=m, tp_atr_mult=filler, be_atr_mult=filler))
     r.update(exit_mode="trailing_stop", take_profit=None, break_even_trigger=None, break_even_new_sl=None,
              reward_usd=None, reward_risk_ratio=None, trail_atr_mult=p.trail_atr_mult,
              trail_distance_usd=round(p.trail_atr_mult * atr_value, 8))
