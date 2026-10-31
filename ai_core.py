@@ -222,6 +222,19 @@ def validate(value: Any, schema: dict, path: str = "$") -> None:
         raise SchemaError(f"{path}: texto de más de {schema['maxLength']} caracteres")
 
 
+def clamp_lengths(value: Any, schema: dict) -> Any:
+    """Recorta los textos que pasan de maxLength. La API no aplica ese límite y a veces el modelo escribe un
+    motivo largo: perder el voto entero por eso no tiene sentido. Lo demás se sigue validando igual."""
+    if isinstance(value, str) and "maxLength" in schema and len(value) > schema["maxLength"]:
+        return value[:schema["maxLength"] - 1].rstrip() + "…"
+    if isinstance(value, dict):
+        props = schema.get("properties", {})
+        return {k: clamp_lengths(v, props[k]) if k in props else v for k, v in value.items()}
+    if isinstance(value, list) and "items" in schema:
+        return [clamp_lengths(v, schema["items"]) for v in value]
+    return value
+
+
 def api_schema(schema: dict) -> dict:
     """Copia del esquema sin las restricciones que la API de Anthropic no acepta (maxLength, maxItems);
     esas se validan aquí, en el cliente."""
@@ -626,6 +639,7 @@ class AIClient:
             ans = None
             try:
                 ans = prov.ask(model, system, user, schema, effort, max_tokens)
+                ans.data = clamp_lengths(ans.data, schema)
                 validate(ans.data, schema)
                 log.info("IA %s: %s/%s %d+%d tokens %.5f USD", task, ans.provider, ans.model,
                          ans.tokens_in, ans.tokens_out, ans.cost_usd)
