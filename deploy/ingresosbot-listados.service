@@ -1,0 +1,25 @@
+# systemd: bot "Nuevos listados" (listing_bot.py) en paper trading, EN PARALELO a los demás bots, con su propia
+# base (data/listados_state.db, 500 USD de papel). Compra la primera ruptura del máximo del día 1 de cada moneda
+# nueva de Binance (docs/LISTADOS.md). Su tarjeta del panel sale de deploy/bots.json, id "listados".
+# deploy/install_almalinux.sh lo copia pero no lo activa. Para encenderlo:
+#   sudo systemctl enable --now ingresosbot-listados
+#   journalctl -u ingresosbot-listados -f       # ver el log en vivo
+# Comparte el .env solo para las alertas de Telegram, que llegan con el prefijo [Nuevos listados].
+[Unit]
+Description=Ingresosbot Nuevos listados paper trading 24/7 (velas de 1 h)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ingresosbot
+Group=ingresosbot
+WorkingDirectory=/opt/Ingresosbot
+ExecStart=/opt/Ingresosbot/.venv/bin/python listing_bot.py --env-file .env --log-file logs/bot-listados.log
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

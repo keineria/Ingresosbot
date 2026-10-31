@@ -53,6 +53,8 @@ def bot_report(bot: dict, now: pd.Timestamp) -> dict:
                    "week": sm.pnl_since((day - pd.Timedelta(days=day.dayofweek)).isoformat()),
                    "month": sm.pnl_since(day.replace(day=1).isoformat())}
     cycle = json.loads(cycle) if cycle else None
+    if bot.get("dynamic_symbols"):          # bot de nuevos listados: los pares son los que vigila ahora
+        head["symbols"] = list((cycle or {}).get("watching") or [])
     keep_pos = ("symbol", "side", "entry_price", "stop_loss", "initial_stop_loss", "position_units", "risk_usd",
                 "opened_at", "trail_atr_mult")
     keep_tr = ("symbol", "side", "result", "exit_reason", "entry_price", "exit_price", "pnl_usd", "pnl_pct",

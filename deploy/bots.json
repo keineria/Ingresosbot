@@ -52,5 +52,23 @@
       "Stop loss inicial a 3 ATR diarios; luego un trailing stop a 5 ATR que solo se mueve a favor. Arriesga 1,5% por operación, con el mismo Circuit Breaker (Capa 1)."
     ],
     "backtest": "2022→oct-2026 con 500 USD en 5 cripto + oro: +161% con caída máx. 19,6% (antes +109%, 13,7%). Positiva en cada año: 2022 +7,6%, 2023 +17%, 2024 +55%, 2025 +21%, últimos 12 meses +17%. Gana entrando en mercado alcista, bajista y lateral. Unas 2 operaciones al mes."
+  },
+  {
+    "id": "listados",
+    "name": "Nuevos listados",
+    "service": "ingresosbot-listados",
+    "db": "data/listados_state.db",
+    "interval": "1h",
+    "symbols": [],
+    "dynamic_symbols": true,
+    "params": "deploy/listados_params.json",
+    "balance": 500,
+    "summary": "Desde el 31-oct-2026, en papel: vigila cada moneda nueva de Binance durante sus primeros 14 días y compra la primera vez que supera el máximo de su primer día. Opera poco (~1 vez al mes) y es la parte más arriesgada del grupo.",
+    "how": [
+      "Mira cada hora qué monedas nuevas contra USDT hay en Binance (sin stablecoins, tokens apalancados, acciones tokenizadas ni tickers nuevos de monedas viejas).",
+      "El máximo del día 1 es el máximo de sus primeras 24 velas de 1 hora. Compra cuando una vela cierra por encima, solo la primera vez y hasta el día 14. Una sola operación por moneda.",
+      "Stop a -15%; luego trailing a 15% bajo el máximo desde la entrada (solo sube). Sale como mucho a los 7 días. Usa el 10% del saldo por operación (5% en THROTTLED), máximo 3 a la vez, con la Capa 1 y apagado automático si el saldo cae 20% desde su máximo."
+    ],
+    "backtest": "242 listados de 2023-01 a 2026-10 con 500 USD: +28,3% con caída máx. 8,7%, 53 operaciones, gana 47%, PF 1,95; +6,7% sin sus 3 mejores operaciones y 19 de 20 sorteos positivos. Cuidado: fue la 4.ª-5.ª mejor de 208 reglas probadas y en 2026 las rupturas han ido flojas; comprar y mantener 30 días un listado daba una mediana de -29%."
   }
 ]
