@@ -45,6 +45,7 @@ de cupo se cuenta como si la moneda estuviera ocupada mientras duraba (el bot re
 Uso (en el VPS, como usuario ingresosbot, desde /opt/Ingresosbot). Reutiliza las velas de 15 min del Cazador:
   python range_lab.py download --csv-dir data/cazador/velas            # solo baja lo que falta (incremental)
   python range_lab.py run --csv-dir data/cazador/velas --out-dir data/rango/informes --workers 2
+  python range_lab.py run --set corto --csv-dir data/cazador/velas --out-dir data/rango/informes_15m --workers 2
 """
 
 from __future__ import annotations
@@ -438,6 +439,22 @@ def grid() -> list[Variant]:
     return out
 
 
+def grid_short() -> list[Variant]:
+    """Rangos cortos detectados en velas de 15 min (6 a 24 horas), pedidos por Keiner el 31-oct. ~120.
+    Escalones 1/2/4: con rangos estrechos más escalones no dejan el 0,6% mínimo por escalón."""
+    shapes = [("15m", 24, 0.8, 2.5), ("15m", 48, 0.8, 3.0), ("15m", 48, 1.5, 5.0), ("15m", 96, 1.0, 4.0),
+              ("15m", 96, 2.0, 6.0)]
+    out = []
+    for (tf, n, w0, w1), t, lv, k, tr in itertools.product(shapes, (2, 3), (1, 2, 4), (0.5, 1.5),
+                                                          ("none", "ema200")):
+        out.append(Variant(det_tf=tf, lookback=n, w_min=w0, w_max=w1, touches=t, levels=lv, stop_atr=k,
+                           trend=tr))
+    return out
+
+
+GRIDS = {"normal": grid, "corto": grid_short}
+
+
 def score(r: dict) -> float:
     if r["episodes"] < 30:
         return -1e9
@@ -599,12 +616,14 @@ def main(argv=None) -> int:
     ap.add_argument("--trade-from", default="2024-01-01")
     ap.add_argument("--balance", type=float, default=500.0)
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--set", choices=tuple(GRIDS), default="normal",
+                    help="normal = rangos en 1 h / 4 h; corto = rangos en velas de 15 min")
     a = ap.parse_args(argv)
     symbols = [s.strip().upper() for s in a.symbols.split(",") if s.strip()]
     if a.mode == "download":
         print("\n".join(hl.download(a.csv_dir, symbols, BASE, a.since)))
     else:
-        print(run(a.csv_dir, symbols, a.out_dir, a.trade_from, a.balance, a.workers))
+        print(run(a.csv_dir, symbols, a.out_dir, a.trade_from, a.balance, a.workers, variants=GRIDS[a.set]()))
     return 0
 
 

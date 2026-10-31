@@ -52,6 +52,12 @@ sudo -u ingresosbot nice -n 10 .venv/bin/python range_lab.py download --csv-dir 
 sudo -u ingresosbot nice -n 10 .venv/bin/python range_lab.py run --csv-dir data/cazador/velas --out-dir data/rango/informes --workers 2
 ```
 
+Rangos más cortos (detectados en velas de 15 min, de 6 a 24 horas, pedido de Keiner):
+
+```
+sudo -u ingresosbot nice -n 10 .venv/bin/python range_lab.py run --set corto --csv-dir data/cazador/velas --out-dir data/rango/informes_15m --workers 2
+```
+
 La descarga solo baja lo que falta desde la última vez (y PAXG completo, unos minutos). La corrida tarda unos
 20-40 minutos y no toca a los bots que están encendidos. Para ver el resultado:
 

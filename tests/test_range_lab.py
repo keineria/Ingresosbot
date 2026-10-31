@@ -114,6 +114,13 @@ class TestRangeLab(unittest.TestCase):
             peak = max(peak, open_now)
         self.assertLessEqual(peak, 2)
 
+    def test_short_set_detects_on_15m(self):
+        vs = rl.grid_short()
+        self.assertTrue(all(v.det_tf == "15m" for v in vs))
+        v = rl.Variant(det_tf="15m", lookback=96, w_min=1.0, w_max=4.0, levels=2)
+        r = self.run_acc(self.rng, v)
+        self.assertGreater(r["episodes"], 40)
+
     def test_run_writes_report(self):
         with tempfile.TemporaryDirectory() as d:
             syms = ["BTCUSDT"] + [f"C{k}USDT" for k in range(5)]
