@@ -117,6 +117,16 @@ class TestSchemaAndClient(unittest.TestCase):
         self.assertAlmostEqual(store.month_cost(NOW), 0.01)              # la respuesta inválida también costó
         self.assertEqual(store.decisions()[0]["decision"], "ERROR_ESQUEMA")
 
+    def test_long_reason_is_trimmed_not_lost(self):
+        # 31-oct-2026: el analista escribió un motivo de más de 300 caracteres y se perdió su voto
+        store = AIStore(":memory:")
+        p = FakeProvider("anthropic", [VOTE_OK | {"motivo": "x" * 450}])
+        ans = client(store, p).ask("analista", "s", "u", ag.ANALISTA_SCHEMA)
+        self.assertIsNotNone(ans)
+        self.assertEqual(len(ans.data["motivo"]), 300)
+        self.assertTrue(ans.data["motivo"].endswith("…"))
+        self.assertEqual(ans.data["voto"], VOTE_OK["voto"])
+
     def test_budget_cap_and_disabled(self):
         store = AIStore(":memory:")
         store.record("vigia", iso(NOW), decision="OK", answer=Answer({}, "anthropic", "m", 1, 1, 2.5))
