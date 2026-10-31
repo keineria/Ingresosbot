@@ -132,11 +132,18 @@ class DashboardApp:
         self.service_state = service_state or (lambda svc: systemd_state(svc, clock))
         self.bot = {"id": bot.get("id", "oficial"), "name": bot.get("name", "Bot Oficial"),
                     **{k: bot[k] for k in BOT_TEXT_KEYS if k in bot}}
+        # "dynamic_symbols": los pares no son fijos (bot de nuevos listados): salen de su último ciclo ("watching").
+        self.dynamic_symbols = bool(bot.get("dynamic_symbols"))
         self._price_cache: dict[str, tuple[float, float]] = {}
         self._scan_lock = threading.Lock()
         self._db_lock = threading.Lock()      # una escritura a la vez desde este proceso
         # Crea la base (o la migra) con el balance configurado si aún no existe.
         StateManager(cfg.db_path, cfg.initial_balance, params).close()
+
+    def _symbols(self, cycle: dict | None) -> list[str]:
+        if self.dynamic_symbols:
+            return list((cycle or {}).get("watching") or [])
+        return self.cfg.symbols
 
     def _sm(self) -> StateManager:
         return StateManager(self.cfg.db_path, self.cfg.initial_balance, self.p, self.cfg.fee_pct)
@@ -178,11 +185,13 @@ class DashboardApp:
 
         prices = self._with_prices(positions)
         bar_ms = int(last_bar) if last_bar else None
-        market = {s: {"price": prices[s] if s in prices else self._price(s)} for s in self.cfg.symbols}
+        cycle = json.loads(last_cycle) if last_cycle else None
+        symbols = self._symbols(cycle)
+        market = {s: {"price": prices[s] if s in prices else self._price(s)} for s in symbols}
         return {
             "server_time": pd.Timestamp(self.clock(), unit="s", tz="UTC").isoformat(),
             "bot": self.bot,
-            "config": self._config(),
+            "config": self._config() | {"symbols": symbols},
             "account": {k: acc[k] for k in ("status", "balance", "initial_balance", "daily_drawdown_pct",
                                             "consecutive_losses", "cooldown_bars_remaining", "day_peak_equity",
                                             "updated_at")} | {"manual_halt": bool(acc["manual_halt"])},
@@ -191,7 +200,7 @@ class DashboardApp:
                          "formula": f"balance × {self.p.max_allocation_pct:g}% × {self.p.max_leverage:g}"},
             "runner": {"last_bar_open_ms": bar_ms,
                        "last_bar_open": pd.Timestamp(bar_ms, unit="ms", tz="UTC").isoformat() if bar_ms else None,
-                       "last_cycle": json.loads(last_cycle) if last_cycle else None},
+                       "last_cycle": cycle},
             "metrics": metrics,
             "periods": periods,
             "balance_curve": curve,
@@ -256,7 +265,7 @@ class DashboardApp:
             if isinstance(d, dict):
                 decisions[sym] = {k: d[k] for k in ("decision", "regime", "blocking", "reason", "error") if d.get(k)}
         return self.bot | {
-            "interval": self.cfg.interval, "symbols": self.cfg.symbols, "strategy": self.p.strategy,
+            "interval": self.cfg.interval, "symbols": self._symbols(cycle), "strategy": self.p.strategy,
             "account": {k: acc[k] for k in ("status", "balance", "initial_balance", "daily_drawdown_pct",
                                             "consecutive_losses", "cooldown_bars_remaining")}
                        | {"manual_halt": bool(acc["manual_halt"])},
@@ -308,7 +317,7 @@ class DashboardApp:
         cycle = json.loads(last_cycle) if last_cycle else None
         init = acc["initial_balance"]
         return self.bot | {
-            "interval": self.cfg.interval, "symbols": self.cfg.symbols, "strategy": self.p.strategy,
+            "interval": self.cfg.interval, "symbols": self._symbols(cycle), "strategy": self.p.strategy,
             "status": acc["status"], "manual_halt": bool(acc["manual_halt"]), "balance": acc["balance"],
             "initial_balance": init,
             "return_pct": round((acc["balance"] / init - 1) * 100, 2) if init else None,
@@ -324,8 +333,9 @@ class DashboardApp:
             with self._sm() as sm:
                 account = sm.engine_account()
                 open_syms = {p["symbol"] for p in sm.positions()}
+                last_cycle = sm.meta_get("last_cycle")
             results = {}
-            for symbol in self.cfg.symbols:
+            for symbol in self._symbols(json.loads(last_cycle) if last_cycle else None):
                 try:
                     df = self.candle_source(symbol, self.cfg.interval, 500)
                     r = q.run_engine(account, candles=df, symbol=symbol, timeframe=self.cfg.interval,

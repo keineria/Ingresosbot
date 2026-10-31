@@ -61,10 +61,12 @@ chmod 600 "$APP_DIR/.env"
 say "5/6 Servicios systemd"
 # ingresosbot-trend.service (Trend Rider), ingresosbot-tortuga.service (Tortuga 55) e ingresosbot-ai.service
 # (agentes de IA) se instalan pero no se activan: ver docs/TREND_RIDER.md, docs/ALTERNATIVAS.md y docs/AGENTES_IA.md.
-# El informe diario (ingresosbot-report.timer) tampoco. ingresosbot-bot@.service es la plantilla para bots nuevos
+# El informe diario (ingresosbot-report.timer) y el bot de nuevos listados (ingresosbot-listados.service,
+# docs/LISTADOS.md) tampoco. ingresosbot-bot@.service es la plantilla para bots nuevos
 # de deploy/bots.json (docs/PANEL_BOTS.md).
 for unit in ingresosbot.service ingresosbot-web.service ingresosbot-trend.service ingresosbot-tortuga.service \
-            ingresosbot-report.service ingresosbot-report.timer ingresosbot-bot@.service ingresosbot-ai.service; do
+            ingresosbot-report.service ingresosbot-report.timer ingresosbot-bot@.service ingresosbot-ai.service \
+            ingresosbot-listados.service; do
   sed -e "s|/opt/Ingresosbot|$APP_DIR|g" \
       -e "s|^User=.*|User=$APP_USER|" \
       -e "s|^Group=.*|Group=$APP_USER|" \

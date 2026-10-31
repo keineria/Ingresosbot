@@ -823,7 +823,7 @@
 
   // Perfil Trend Rider: sin TP fijo ni BE; el SL sube solo (trailing).
   const protection = (p, beLabel) => p.is_at_breakeven ? pill(beLabel, 's-good')
-    : p.trail_atr_mult && p.stop_loss !== p.initial_stop_loss ? pill('Trailing activo', 's-accent') : pill('SL inicial', 's-mute');
+    : p.stop_loss !== p.initial_stop_loss ? pill('Trailing activo', 's-accent') : pill('SL inicial', 's-mute');
 
   function renderPositions(pos) {
     $('cnt-pos').textContent = pos.length;
@@ -832,8 +832,8 @@
         <td data-l="Lado" class="${p.side === 'LONG' ? 'good' : 'bad'}">${esc(p.side)}</td>
         <td data-l="Entrada" class="r">${px(p.entry_price)}</td>
         <td data-l="SL actual" class="r">${px(p.stop_loss)}</td>
-        <td data-l="TP" class="r">${p.trail_atr_mult ? 'trailing ' + fmt(p.trail_atr_mult, 1) + ' ATR' : px(p.take_profit)}</td>
-        <td data-l="Trigger BE" class="r muted">${p.trail_atr_mult ? '—' : px(p.breakeven_trigger)}</td>
+        <td data-l="TP" class="r">${p.trail_atr_mult ? 'trailing ' + fmt(p.trail_atr_mult, 1) + ' ATR' : p.take_profit ? px(p.take_profit) : '—'}</td>
+        <td data-l="Trigger BE" class="r muted">${p.trail_atr_mult || !p.breakeven_trigger ? '—' : px(p.breakeven_trigger)}</td>
         <td data-l="Precio" class="r">${px(p.current_price)}</td>
         <td data-l="PnL latente" class="r ${tone(p.unrealized_pnl_usd)}">${signed(p.unrealized_pnl_usd)}</td>
         <td data-l="Protección">${protection(p, 'BE +0,2%')}</td></tr>`).join('')
@@ -1390,7 +1390,7 @@
 
     const pos = b.open_positions;
     const posHtml = pos.length ? `<ul class="mini">${pos.map((p) => {
-        const prot = p.is_at_breakeven ? 'en Break-Even' : p.trail_atr_mult && p.stop_loss !== p.initial_stop_loss ? 'trailing activo' : 'SL inicial';
+        const prot = p.is_at_breakeven ? 'en Break-Even' : p.stop_loss !== p.initial_stop_loss ? 'trailing activo' : 'SL inicial';
         return `<li><span><b>${esc(short(p.symbol))}</b> <span class="${p.side === 'LONG' ? 'good' : 'bad'}">${esc(p.side)}</span>
             <span class="faint">· ${px(p.entry_price)} → ${px(p.current_price)}</span></span>
           <span class="r ${tone(p.unrealized_pnl_usd)}">${signed(p.unrealized_pnl_usd)} $</span>

@@ -51,12 +51,17 @@ class Rec:
 class TestBotsFile(unittest.TestCase):
     def test_repo_bots_file(self):
         bots = load_bots(ROOT / "deploy" / "bots.json")
-        self.assertEqual([b["id"] for b in bots], ["oficial", "trend", "tortuga"])
+        self.assertEqual([b["id"] for b in bots], ["oficial", "trend", "tortuga", "listados"])
         for b in bots:
             self.assertTrue(b["summary"] and b["how"] and b["backtest"], b["id"])
-            self.assertTrue(b.get("trader"), b["id"])           # nombre de persona en el panel
+            if not b.get("dynamic_symbols"):                     # "Nuevos listados" espera el nombre que elija Keiner
+                self.assertTrue(b.get("trader"), b["id"])       # nombre de persona en el panel
             if b.get("params"):
                 self.assertTrue((ROOT / b["params"]).exists(), b["params"])
+        listados = find_bot("listados", ROOT / "deploy" / "bots.json")
+        self.assertEqual((listados["service"], listados["db"], listados["balance"], listados["dynamic_symbols"]),
+                         ("ingresosbot-listados", "data/listados_state.db", 500, True))
+        self.assertTrue((ROOT / "deploy" / "ingresosbot-listados.service").exists())
         cfg, p = bot_settings(find_bot("tortuga", ROOT / "deploy" / "bots.json"))
         self.assertEqual((cfg.interval, cfg.db_path, cfg.initial_balance), ("1d", "data/tortuga_state.db", 500.0))
         self.assertIn("PAXGUSDT", cfg.symbols)

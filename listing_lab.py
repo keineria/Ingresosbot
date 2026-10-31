@@ -59,6 +59,8 @@ MIN_NOTIONAL = 5.0
 STABLES = {"USDC", "FDUSD", "TUSD", "BUSD", "USDP", "DAI", "EUR", "EURI", "AEUR", "USDE", "PYUSD", "XUSD",
            "USD1", "BFUSD", "RLUSD", "USDS", "GBP", "TRY", "BRL"}
 LEVERAGED = ("UP", "DOWN", "BULL", "BEAR")
+# Tickers nuevos de activos viejos (ETH/SOL en staking, oro tokenizado, redenominaciones): no son monedas nuevas.
+NOT_NEW = {"BETH", "WBETH", "BNSOL", "XAUT", "PAXG", "1MBABYDOGE"}
 # Binance bStocks (acciones y ETF tokenizados, desde junio de 2026): NVDAB, TSLAB, SPYB… No son criptos nuevas.
 BSTOCKS_FROM = pd.Timestamp("2026-06-01", tz="UTC")
 
@@ -105,7 +107,7 @@ def usdt_symbols(info: dict) -> list[tuple[str, str]]:
     out = []
     for s in info.get("symbols", []):
         base = s.get("baseAsset", "")
-        if s.get("quoteAsset") != "USDT" or base in STABLES or base.endswith(LEVERAGED):
+        if s.get("quoteAsset") != "USDT" or base in STABLES or base in NOT_NEW or base.endswith(LEVERAGED):
             continue
         out.append((s["symbol"], s.get("status", "")))
     return out
@@ -169,7 +171,7 @@ def load(csv_dir: str | Path, keep_stocks: bool = False, excluded: list | None =
          ) -> tuple[dict[str, pd.DataFrame], pd.Series | None]:
     d = Path(csv_dir)
     data = {p.name[:-7]: q.load_csv(p) for p in sorted(d.glob("*_1h.csv"))}
-    data = {s: df for s, df in data.items() if len(df) >= 48}
+    data = {s: df for s, df in data.items() if len(df) >= 48 and s[:-4] not in NOT_NEW}
     if not keep_stocks:
         stocks = [s for s, df in data.items() if is_tokenized_stock(s, df.time.iloc[0])]
         for s in stocks:
