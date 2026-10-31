@@ -126,6 +126,23 @@ class TestListingLab(unittest.TestCase):
             ll.download(tmp, "2023-01-01")          # 2.ª vez: no vuelve a pedir monedas ya completas
             self.assertEqual(len(calls) - n_first, 2)   # exchangeInfo + BTC diario
 
+    def test_tokenized_stocks_are_excluded(self):
+        self.assertTrue(ll.is_tokenized_stock("NVDABUSDT", pd.Timestamp("2026-07-01", tz="UTC")))
+        self.assertFalse(ll.is_tokenized_stock("NVDABUSDT", pd.Timestamp("2025-07-01", tz="UTC")))
+        self.assertFalse(ll.is_tokenized_stock("ROBOUSDT", pd.Timestamp("2026-07-01", tz="UTC")))
+        with tempfile.TemporaryDirectory() as tmp:
+            pump_dump_rebound("2026-07-22", 1).to_csv(Path(tmp) / "TSLABUSDT_1h.csv", index=False)
+            pump_dump_rebound("2026-07-22", 2).to_csv(Path(tmp) / "ROBOUSDT_1h.csv", index=False)
+            excluded = []
+            data, _ = ll.load(tmp, excluded=excluded)
+            self.assertEqual(list(data), ["ROBOUSDT"])
+            self.assertEqual(excluded, ["TSLABUSDT"])
+            self.assertEqual(len(ll.load(tmp, keep_stocks=True)[0]), 2)
+            self.assertIn("Se excluyeron 1", ll.report_md(ll.evaluate(data | {f"N{i}USDT": d for i, d in
+                                                                              enumerate(self.data.values())}, None,
+                                                                     rules=[ll.Rule("hora", h=4)], top=1),
+                                                          500, excluded))
+
 
 if __name__ == "__main__":
     unittest.main()

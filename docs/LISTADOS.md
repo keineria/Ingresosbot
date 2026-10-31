@@ -13,7 +13,7 @@ Binance aún muestra) antes de construir nada. Si ninguna regla pasa, se descart
 | caida | Esperar a que caiga 20%, 35% o 50% desde su máximo en la primera semana; salir por TP (15% / 30%), stop o tiempo |
 | ruptura | Desde el día 2, comprar cuando supera el máximo de las primeras 24 h; stop, trailing o tiempo |
 
-Cada regla también se prueba solo cuando BTC está sobre su SMA 200 diaria (208 reglas en total).
+Cada regla también se prueba solo cuando BTC está sobre su SMA 200 diaria (208 reglas en total). Se excluyen las acciones y ETF tokenizados de Binance (bStocks, p. ej. NVDABUSDT, desde junio de 2026): no son criptos nuevas (`--keep-stocks` para incluirlas).
 
 Costos: 0,08% de comisión por orden y deslizamiento de 0,5% por lado en las primeras 24 h (libro fino) y 0,2% después.
 Cuenta de 500 USD, 10% del saldo por operación, máx. 3 a la vez, Capa 1 completa y apagado al -20%.

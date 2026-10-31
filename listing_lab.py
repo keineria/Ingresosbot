@@ -59,6 +59,13 @@ MIN_NOTIONAL = 5.0
 STABLES = {"USDC", "FDUSD", "TUSD", "BUSD", "USDP", "DAI", "EUR", "EURI", "AEUR", "USDE", "PYUSD", "XUSD",
            "USD1", "BFUSD", "RLUSD", "USDS", "GBP", "TRY", "BRL"}
 LEVERAGED = ("UP", "DOWN", "BULL", "BEAR")
+# Binance bStocks (acciones y ETF tokenizados, desde junio de 2026): NVDAB, TSLAB, SPYB… No son criptos nuevas.
+BSTOCKS_FROM = pd.Timestamp("2026-06-01", tz="UTC")
+
+
+def is_tokenized_stock(symbol: str, listed: pd.Timestamp) -> bool:
+    base = symbol[:-4] if symbol.endswith("USDT") else symbol
+    return len(base) >= 3 and base.endswith("B") and listed >= BSTOCKS_FROM
 
 
 @dataclass(frozen=True)
@@ -158,10 +165,17 @@ def download(csv_dir: str | Path, since: str = "2023-01-01", pause: float = 0.12
     return out
 
 
-def load(csv_dir: str | Path) -> tuple[dict[str, pd.DataFrame], pd.Series | None]:
+def load(csv_dir: str | Path, keep_stocks: bool = False, excluded: list | None = None
+         ) -> tuple[dict[str, pd.DataFrame], pd.Series | None]:
     d = Path(csv_dir)
     data = {p.name[:-7]: q.load_csv(p) for p in sorted(d.glob("*_1h.csv"))}
     data = {s: df for s, df in data.items() if len(df) >= 48}
+    if not keep_stocks:
+        stocks = [s for s, df in data.items() if is_tokenized_stock(s, df.time.iloc[0])]
+        for s in stocks:
+            del data[s]
+        if excluded is not None:
+            excluded.extend(stocks)
     if not data:
         raise SystemExit(f"No hay velas en {csv_dir}. Corre primero: python listing_lab.py download")
     btc_ok = None
@@ -344,20 +358,23 @@ def evaluate(data, btc_ok, balance: float = 500.0, top: int = 5, rules=None) -> 
             "hold30_pos": float((hold_all.ret > 0).mean() * 100), "hold30_n": len(hold_all)}
 
 
-def report_md(res: dict, balance: float) -> str:
-    L = ["# Laboratorio de nuevos listados de Binance", "",
-         f"{res['n']} monedas USDT listadas entre {res['first']:%Y-%m-%d} y {res['last']:%Y-%m-%d}, con sus primeros "
-         f"~41 días en velas de 1 h. Cuenta de {balance:,.0f} USD, 10% del saldo por operación, máx. 3 a la vez, "
-         "Capa 1 y apagado al -20%. Comisión 0,08% por orden; deslizamiento 0,5% por lado en las primeras 24 h y "
-         "0,2% después.", "",
-         f"Referencia: comprar en la 2.ª hora y aguantar 30 días dio una mediana de {res['hold30_median']:+.1f}% por "
-         f"moneda, y solo el {res['hold30_pos']:.0f}% de {res['hold30_n']} terminó en positivo.", "",
-         f"Elección con los listados anteriores al {res['split']:%Y-%m-%d}; validación con los posteriores. Pasa si: "
-         "total > 0, validación > 0, ≥ 15 de 20 sorteos de la mitad de las monedas > 0, sigue > 0 sin sus 3 mejores "
-         "operaciones, caída máx. < 20% y ≥ 40 operaciones.", "",
-         "| Regla | Entren. % | Valid. % | Total % | Sin 3 mejores % | Caída máx. % | Ops | Acierto % | PF | "
-         "Mediana por op. % | Sorteos > 0 | ¿Pasa? |",
-         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+def report_md(res: dict, balance: float, excluded: list | None = None) -> str:
+    L = ["# Laboratorio de nuevos listados de Binance", ""]
+    if excluded:
+        L += [f"Se excluyeron {len(excluded)} acciones o ETF tokenizados de Binance (bStocks, desde junio de 2026), "
+              f"p. ej. {', '.join(sorted(excluded)[:8])}. No son criptos nuevas.", ""]
+    L += [f"{res['n']} monedas USDT listadas entre {res['first']:%Y-%m-%d} y {res['last']:%Y-%m-%d}, con sus primeros "
+          f"~41 días en velas de 1 h. Cuenta de {balance:,.0f} USD, 10% del saldo por operación, máx. 3 a la vez, "
+          "Capa 1 y apagado al -20%. Comisión 0,08% por orden; deslizamiento 0,5% por lado en las primeras 24 h y "
+          "0,2% después.", "",
+          f"Referencia: comprar en la 2.ª hora y aguantar 30 días dio una mediana de {res['hold30_median']:+.1f}% por "
+          f"moneda, y solo el {res['hold30_pos']:.0f}% de {res['hold30_n']} terminó en positivo.", "",
+          f"Elección con los listados anteriores al {res['split']:%Y-%m-%d}; validación con los posteriores. Pasa si: "
+          "total > 0, validación > 0, ≥ 15 de 20 sorteos de la mitad de las monedas > 0, sigue > 0 sin sus 3 mejores "
+          "operaciones, caída máx. < 20% y ≥ 40 operaciones.", "",
+          "| Regla | Entren. % | Valid. % | Total % | Sin 3 mejores % | Caída máx. % | Ops | Acierto % | PF | "
+          "Mediana por op. % | Sorteos > 0 | ¿Pasa? |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for f in res["finals"]:
         fu = f["full"]
         off = f" (apagado {fu['killed_at']})" if fu["killed_at"] else ""
@@ -373,6 +390,8 @@ def report_md(res: dict, balance: float) -> str:
     any_pass = any(f["passed"] for f in res["finals"])
     L += ["", f"En entrenamiento, {pos_train} de {len(res['train_all'])} reglas terminaron en positivo ({kinds}).",
           "", "## Veredicto", "",
+          "Nota: operaciones_mejor.csv lista todas las señales de la mejor regla, también las que la cuenta no tomó "
+          "por el tope de 3 posiciones, la Capa 1 o el apagado.", "",
           ("Al menos una regla pasa todas las condiciones: se puede probar en papel con ella."
            if any_pass else
            "Ninguna regla pasa todas las condiciones: comprar nuevos listados no se convierte en bot. "
@@ -380,16 +399,17 @@ def report_md(res: dict, balance: float) -> str:
     return "\n".join(L)
 
 
-def run(csv_dir: str, out_dir: str, balance: float) -> str:
+def run(csv_dir: str, out_dir: str, balance: float, keep_stocks: bool = False) -> str:
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    data, btc_ok = load(csv_dir)
+    excluded: list[str] = []
+    data, btc_ok = load(csv_dir, keep_stocks, excluded)
     print(f"[run] {len(data)} listados", file=sys.stderr)
     res = evaluate(data, btc_ok, balance)
     rows = [{"label": r.label(), **asdict(r), **m} for r, m in res["train_all"]]
     pd.DataFrame(rows).to_csv(Path(out_dir) / "entrenamiento.csv", index=False)
     if res["finals"]:
         res["cache"][res["finals"][0]["rule"]].to_csv(Path(out_dir) / "operaciones_mejor.csv", index=False)
-    md = report_md(res, balance)
+    md = report_md(res, balance, excluded)
     (Path(out_dir) / "informe_listados.md").write_text(md, encoding="utf-8")
     best = [f for f in res["finals"] if f["passed"]]
     if best:
@@ -405,11 +425,12 @@ def main(argv=None) -> int:
     ap.add_argument("--out-dir", default="data/listados/informes")
     ap.add_argument("--since", default="2023-01-01")
     ap.add_argument("--balance", type=float, default=500.0)
+    ap.add_argument("--keep-stocks", action="store_true", help="no excluir las acciones tokenizadas (bStocks)")
     a = ap.parse_args(argv)
     if a.mode == "download":
         print("\n".join(download(a.csv_dir, a.since)))
     else:
-        print(run(a.csv_dir, a.out_dir, a.balance))
+        print(run(a.csv_dir, a.out_dir, a.balance, a.keep_stocks))
     return 0
 
 
