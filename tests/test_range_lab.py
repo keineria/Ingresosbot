@@ -72,6 +72,29 @@ class TestEpisode(unittest.TestCase):
         e2 = rl.run_episode(o, h, l, c, 1, 3, 100.0, 110.0, 10.0, v)
         self.assertEqual(e2["fees"], 0)
 
+    def test_breakout_up_rides_long_with_trailing(self):
+        # rango 100-110, ATR 2: cierra en 111.5 (> 110 + 0.5·2) → compra en la apertura siguiente y sigue la subida;
+        # el trailing a 3 ATR del máximo (120 − 6 = 114) lo saca.
+        v = rl.Variant(levels=0, stop_atr=1.0, brk_long=True, trail_atr=3.0)
+        o, h, l, c = frame([(105, 106, 104, 105), (105, 111.6, 105, 111.5), (112, 116, 111.8, 115),
+                            (115, 120, 114.5, 119), (119, 119, 113, 113.5)])
+        e = rl.run_episode(o, h, l, c, 1, 5, 100.0, 110.0, 2.0, v)
+        self.assertEqual(e["reason"], "LARGO_TRAS_RUPTURA")
+        self.assertEqual(e["end"], 4)
+        expect = 114 * (1 - rl.SLIP) * (1 - rl.FEE_MARKET) / (112 * (1 + rl.SLIP) * (1 + rl.FEE_MARKET))
+        self.assertAlmostEqual(e["ret"] + 1, expect, places=9)
+        self.assertEqual(len(e["path"]), e["end"] - 1 + 1)
+
+    def test_breakout_down_opens_short_and_stops_at_mid_range(self):
+        v = rl.Variant(levels=1, edge=0.0, stop_atr=1.0, brk_short=True, trail_atr=3.0)
+        o, h, l, c = frame([(105, 106, 104, 105), (105, 105, 99.5, 101), (101, 101, 97, 97.5),
+                            (97.5, 98, 94, 95), (95, 106, 95, 105)])
+        e = rl.run_episode(o, h, l, c, 1, 5, 100.0, 110.0, 2.0, v)
+        self.assertEqual(e["reason"], "CORTO_TRAS_RUPTURA")
+        self.assertEqual(len(e["path"]), e["end"] - 1 + 1)
+        self.assertLess(e["ret"], 0)                  # compra en 100, stop en 98, corto atrapado en 94 + 6 = 100
+        self.assertGreater(e["worst"], rl.worst_loss_frac(rl.ladder(100, 110, v), 98.0, v))
+
     def test_worst_case_loss_respects_risk(self):
         v = rl.Variant(levels=4)
         lv = rl.ladder(100, 108, v)
@@ -137,6 +160,13 @@ class TestRangeLab(unittest.TestCase):
         base = rl.Variant(det_tf="30m", lookback=48, w_min=2, w_max=6, levels=1)
         er = rl.replace(base, max_er=0.2)
         self.assertLessEqual(len(rl.all_episodes(self.walk, er)), len(rl.all_episodes(self.walk, base)))
+
+    def test_breakout_set_runs(self):
+        vs = rl.grid_breakout()
+        self.assertEqual(len(vs), 160)
+        for v in (vs[0], vs[-1]):
+            r = self.run_acc(self.walk, v)
+            self.assertGreaterEqual(r["episodes"], 0)
 
     def test_run_writes_report(self):
         with tempfile.TemporaryDirectory() as d:

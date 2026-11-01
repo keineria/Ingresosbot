@@ -92,6 +92,11 @@ class Variant:
     max_er: float = 0.0         # lateral confirmado: eficiencia de Kaufman de las últimas 4N velas ≤ max_er (0 = off)
     season_n: int = 0           # semáforo: los últimos n rangos "en sombra" (los vea o no el bot) suman > 0 (0 = off)
     season_scope: str = "all"   # all = rangos de todas las monedas · coin = solo los de esa moneda
+    # Operar la RUPTURA del lateral (idea de Keiner, 1-nov): al romperse el rango, entrar a favor de la ruptura.
+    brk_long: bool = False      # cierra sobre techo + brk_atr ATR → compra en la apertura siguiente
+    brk_short: bool = False     # salta el stop bajo el piso → abre corto ahí mismo (solo papel / Futuros 1x)
+    brk_atr: float = 0.5
+    trail_atr: float = 4.0      # stop inicial en la mitad del rango; luego trailing a m ATR del mejor precio
     min_range_atr: float = 2.0
     min_step_pct: float = 0.6
     # Cuenta (Capa 1 / Capa 3). No se optimizan.
@@ -101,15 +106,21 @@ class Variant:
     kill_dd_pct: float = 20.0
 
     def label(self) -> str:
-        kind = "rebote simple" if self.levels == 1 else f"escalera {self.levels}"
+        kind = ("sin rebotes" if self.levels == 0 else "rebote simple" if self.levels == 1
+                else f"escalera {self.levels}")
         stop = f"stop piso−{self.stop_atr:g} ATR" if self.stop_atr > 0 else "SIN stop"
         tr = {"none": "", "ema200": " · sobre EMA200", "btc": " · BTC>SMA200"}[self.trend]
         adx = f" · ADX<{self.max_adx:g}" if self.max_adx else ""
         er = f" · lateral ER≤{self.max_er:g}" if self.max_er else ""
         sea = (f" · semáforo {self.season_n} rangos {'todas' if self.season_scope == 'all' else 'la moneda'}"
                if self.season_n else "")
+        brk = ""
+        if self.brk_long or self.brk_short:
+            sides = "+".join(x for x, on in (("largo", self.brk_long), ("corto", self.brk_short)) if on)
+            brk = f" · ruptura→{sides} trail {self.trail_atr:g} ATR"
+        risk = f" · riesgo {self.risk_pct:g}%" if self.risk_pct != 1.5 else ""
         return (f"{self.det_tf} · rango {self.lookback} velas · ancho {self.w_min:g}-{self.w_max:g}% · "
-                f"{self.touches}+{self.touches} toques · {kind} · {stop}{tr}{adx}{er}{sea}")
+                f"{self.touches}+{self.touches} toques · {kind} · {stop}{tr}{adx}{er}{sea}{brk}{risk}")
 
     def det_key(self) -> tuple:
         return (self.det_tf, self.lookback, self.w_min, self.w_max, self.touches, self.tol, self.trend,
@@ -202,9 +213,10 @@ def detect(df15: pd.DataFrame, v: Variant, grid_time: pd.DatetimeIndex, btc_ok: 
     close = d.close.to_numpy()
     with np.errstate(invalid="ignore", divide="ignore"):
         width = (hi / lo - 1) * 100
-        step = width * (1 - 2 * v.edge) / v.levels
+        step = width * (1 - 2 * v.edge) / max(v.levels, 1)
+        step_ok = step >= v.min_step_pct if v.levels else np.ones(len(width), bool)
         ok = ((width >= v.w_min) & (width <= v.w_max) & (t_lo >= v.touches) & (t_hi >= v.touches)
-              & (rng >= v.min_range_atr * atr) & (step >= v.min_step_pct) & (atr > 0)
+              & (rng >= v.min_range_atr * atr) & step_ok & (atr > 0)
               & (close > lo) & (close < hi))
         if v.max_adx:
             ok &= (ind.adx14.to_numpy() < v.max_adx) & (ind.adx14.to_numpy() > 0)
@@ -236,6 +248,8 @@ def detect(df15: pd.DataFrame, v: Variant, grid_time: pd.DatetimeIndex, btc_ok: 
 def ladder(lo: float, hi: float, v: Variant) -> np.ndarray:
     r = hi - lo
     bottom, top = lo + v.edge * r, hi - v.edge * r
+    if v.levels == 0:
+        return np.array([bottom])
     return bottom + np.arange(v.levels + 1) * (top - bottom) / v.levels
 
 
@@ -243,10 +257,68 @@ def worst_loss_frac(lv: np.ndarray, stop: float, v: Variant) -> float:
     """Pérdida (fracción de lo asignado) si se llenan TODOS los escalones de compra y salta el stop."""
     if v.stop_atr <= 0:
         return 1.0
+    if v.levels == 0:
+        return 0.0
     unit = 1.0 / v.levels
     px = stop * (1 - SLIP)
     loss = sum(unit * (1 + FEE_LIMIT) - unit / b * px * (1 - FEE_MARKET) for b in lv[:-1])
     return max(loss, 1e-4)
+
+
+def ride(o, h, l, c, start: int, end: int, side: str, entry: float, eq: float, sl: float, atr: float,
+         trail: float, same_bar: bool = False) -> tuple[int, float, list, float]:
+    """Una posición a favor de la ruptura con stop inicial `sl` y trailing. Devuelve (vela de salida, valor final,
+    ruta del valor vela a vela, comisiones). Con same_bar el corto nace en la vela del stop: en esa vela solo se
+    mira si también tocó su stop (peor caso)."""
+    path, fees = [], 0.0
+    if side == "long":
+        qty = eq / (entry * (1 + FEE_MARKET))
+        fees += qty * entry * FEE_MARKET
+        best, stop = entry, sl
+        for i in range(start, end):
+            if l[i] <= stop:
+                px = min(o[i], stop) * (1 - SLIP)
+                fees += qty * px * FEE_MARKET
+                path.append(qty * px * (1 - FEE_MARKET))
+                return i, path[-1], path, fees
+            best = max(best, h[i])
+            stop = max(stop, best - trail * atr)
+            path.append(qty * c[i])
+        px = c[end - 1] * (1 - SLIP)
+        fees += qty * px * FEE_MARKET
+        path[-1] = qty * px * (1 - FEE_MARKET)
+        return end - 1, path[-1], path, fees
+    qty = eq / entry
+    fees += qty * entry * FEE_MARKET
+    base = eq - qty * entry * FEE_MARKET
+    best, stop = entry, sl
+    for i in range(start, end):
+        if h[i] >= stop:
+            px = (stop if same_bar and i == start else max(o[i], stop)) * (1 + SLIP)
+            fees += qty * px * FEE_MARKET
+            path.append(base + qty * (entry - px) - qty * px * FEE_MARKET)
+            return i, path[-1], path, fees
+        if not (same_bar and i == start):
+            best = min(best, l[i])
+            stop = min(stop, best + trail * atr)
+        path.append(base + qty * (entry - c[i]))
+    px = c[end - 1] * (1 + SLIP)
+    fees += qty * px * FEE_MARKET
+    path[-1] = base + qty * (entry - px) - qty * px * FEE_MARKET
+    return end - 1, path[-1], path, fees
+
+
+def breakout_worst(lo: float, hi: float, atr: float, v: Variant) -> float:
+    """Pérdida máxima aproximada de la pierna de ruptura (fracción de lo asignado): del disparo a la mitad del rango."""
+    mid = (lo + hi) / 2
+    w = 0.0
+    if v.brk_long:
+        e = hi + v.brk_atr * atr
+        w = max(w, (e - mid) / e + 2 * FEE_MARKET + 2 * SLIP)
+    if v.brk_short and v.stop_atr > 0:
+        e = lo - v.stop_atr * atr
+        w = max(w, (mid - e) / e + 2 * FEE_MARKET + 2 * SLIP)
+    return w
 
 
 def run_episode(o, h, l, c, i0: int, end: int, lo: float, hi: float, atr: float, v: Variant) -> dict:
@@ -254,8 +326,10 @@ def run_episode(o, h, l, c, i0: int, end: int, lo: float, hi: float, atr: float,
     lv = ladder(lo, hi, v)
     G = v.levels
     stop = lo - v.stop_atr * atr if v.stop_atr > 0 else -np.inf
-    up_exit = hi + max(v.stop_atr, 1.0) * atr
-    unit = 1.0 / G
+    up_exit = hi + (v.brk_atr if v.brk_long else max(v.stop_atr, 1.0)) * atr
+    mid = (lo + hi) / 2
+    life = end - i0
+    unit = 1.0 / G if G else 0.0
     cash = 1.0
     qty = np.zeros(G)
     held_from = np.full(G, -1)          # vela desde la que el escalón comprado puede venderse
@@ -292,7 +366,15 @@ def run_episode(o, h, l, c, i0: int, end: int, lo: float, hi: float, atr: float,
             fees += held * px * FEE_MARKET
             qty[:] = 0
             reason = "RUPTURA_ABAJO"
-            path.append(cash)
+            if v.brk_short and v.stop_atr > 0:
+                j, cash, seg, f2 = ride(o, h, l, c, i, min(len(c), i + life), "short", px, cash, mid, atr,
+                                        v.trail_atr, same_bar=True)
+                path += seg
+                fees += f2
+                rt += 1
+                i, reason = j, "CORTO_TRAS_RUPTURA"
+            else:
+                path.append(cash)
             break
         # 4) re-armar escalones libres que quedaron por debajo del precio
         for g in range(G):
@@ -300,6 +382,24 @@ def run_episode(o, h, l, c, i0: int, end: int, lo: float, hi: float, atr: float,
                 armed_from[g] = i + 1
         eq = cash + float((qty * ci).sum())
         path.append(eq)
+        if v.brk_long and ci > up_exit:
+            held = qty.sum()
+            if held:                                        # lo comprado en esta vela se vende a mercado
+                px = ci * (1 - SLIP)
+                cash += held * px * (1 - FEE_MARKET)
+                fees += held * px * FEE_MARKET
+                qty[:] = 0
+                path[-1] = cash
+            if i + 1 < len(c):
+                j, cash, seg, f2 = ride(o, h, l, c, i + 1, min(len(c), i + 1 + life), "long", o[i + 1] * (1 + SLIP),
+                                        cash, mid, atr, v.trail_atr)
+                path += seg
+                fees += f2
+                rt += 1
+                i, reason = j, "LARGO_TRAS_RUPTURA"
+            else:
+                reason = "RUPTURA_ARRIBA"
+            break
         if ci > up_exit and not qty.any():
             reason = "RUPTURA_ARRIBA"
             break
@@ -312,8 +412,9 @@ def run_episode(o, h, l, c, i0: int, end: int, lo: float, hi: float, atr: float,
             path[-1] = cash
         reason = "TIEMPO"
     return {"end": i, "ret": path[-1] - 1.0, "path": np.asarray(path, np.float32), "roundtrips": rt,
-            "reason": reason, "fees": fees, "worst": worst_loss_frac(lv, stop, v),
-}
+            "reason": reason, "fees": fees,
+            "worst": max(worst_loss_frac(lv, stop, v) + (breakout_worst(lo, hi, atr, v) if v.brk_short else 0.0),
+                         breakout_worst(lo, hi, atr, v), 1e-4)}
 
 
 def coin_episodes(m: Market, j: int, v: Variant, acts) -> list[dict]:
@@ -439,7 +540,7 @@ def account(m: Market, eps: list[dict], v: Variant, balance: float = 500.0, lo: 
         cap = bal * v.max_alloc_pct / 100
         alloc = min(cap, bal * rp / 100 / e["worst"], bal * 0.85 - used) if v.stop_atr > 0 else \
             min(cap, bal * 0.85 - used)
-        if alloc / v.levels < MIN_NOTIONAL:
+        if alloc / max(v.levels, 1) < MIN_NOTIONAL:
             continue
         used += alloc
         active.append((e["end"], alloc, e))
@@ -511,7 +612,20 @@ def grid_seasons() -> list[Variant]:
     return out
 
 
-GRIDS = {"normal": grid, "corto": grid_short, "temporadas": grid_seasons}
+def grid_breakout() -> list[Variant]:
+    """Ruptura del lateral (Keiner, 1-nov): rangos confirmados (incluidos anchos de hasta 25%), con o sin rebotes
+    dentro, y al romperse se entra a favor: largo arriba, y en papel también corto abajo. Riesgo 1,5% o 3%. 160."""
+    shapes = [("15m", 96, 2.0, 6.0), ("1h", 96, 3.0, 12.0), ("4h", 30, 3.0, 12.0), ("4h", 60, 4.0, 15.0),
+              ("4h", 90, 6.0, 25.0)]
+    out = []
+    for (tf, n, w0, w1), lv, short, k, tr, risk in itertools.product(shapes, (0, 1), (False, True), (0.5, 1.5),
+                                                                     (3.0, 5.0), (1.5, 3.0)):
+        out.append(Variant(det_tf=tf, lookback=n, w_min=w0, w_max=w1, touches=2, levels=lv, stop_atr=k,
+                           brk_long=True, brk_short=short, trail_atr=tr, risk_pct=risk))
+    return out
+
+
+GRIDS = {"normal": grid, "corto": grid_short, "temporadas": grid_seasons, "ruptura": grid_breakout}
 
 
 def score(r: dict) -> float:
@@ -677,7 +791,8 @@ def main(argv=None) -> int:
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--set", choices=tuple(GRIDS), default="normal",
                     help="normal = rangos en 1 h / 4 h; corto = rangos en velas de 15 min; "
-                         "temporadas = 15/30 min con lateral confirmado y semáforo")
+                         "temporadas = 15/30 min con lateral confirmado y semáforo; "
+                         "ruptura = operar la ruptura del lateral (largo y corto)")
     a = ap.parse_args(argv)
     symbols = [s.strip().upper() for s in a.symbols.split(",") if s.strip()]
     if a.mode == "download":

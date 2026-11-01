@@ -67,6 +67,16 @@ de todas las monedas, o los últimos 5 de esa moneda, suman ganancia):
 sudo -u ingresosbot nice -n 10 .venv/bin/python range_lab.py run --set temporadas --csv-dir data/cazador/velas --out-dir data/rango/informes_temporadas --workers 1
 ```
 
+"Ruptura del lateral" (idea de Keiner, 1-nov): los rangos se rompen más de lo que rebotan, así que se prueba
+entrar A FAVOR de la ruptura. Rango confirmado por toques (también anchos, hasta 25%), con o sin rebotes dentro;
+si cierra sobre el techo + 0,5 ATR compra en la vela siguiente, y si salta el stop bajo el piso abre un corto
+(solo papel: con dinero real los cortos requieren Futuros 1x). Stop inicial en la mitad del rango y luego trailing
+a 3 o 5 ATR. Riesgo 1,5% o 3% (más riesgo, como pidió Keiner). 160 variantes:
+
+```
+sudo -u ingresosbot nice -n 10 .venv/bin/python range_lab.py run --set ruptura --csv-dir data/cazador/velas --out-dir data/rango/informes_ruptura --workers 1
+```
+
 La descarga solo baja lo que falta desde la última vez (y PAXG completo, unos minutos). La corrida tarda unos
 20-40 minutos y no toca a los bots que están encendidos. Para ver el resultado:
 
