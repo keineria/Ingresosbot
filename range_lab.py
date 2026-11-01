@@ -70,7 +70,7 @@ FEE_MARKET = 0.001      # orden a mercado (taker)
 SLIP = 0.0005           # deslizamiento en salidas a mercado
 MIN_NOTIONAL = 5.0
 BASE = "15m"
-BAR_MIN = {"15m": 15, "1h": 60, "4h": 240}
+BAR_MIN = {"15m": 15, "30m": 30, "1h": 60, "4h": 240}
 UNIVERSE = hl.UNIVERSE + ("PAXGUSDT",)     # el oro tokenizado suele moverse en rangos: se incluye
 
 
@@ -88,6 +88,10 @@ class Variant:
     life_mult: float = 2.0      # el rango vive como mucho life_mult × N velas
     trend: str = "none"         # none | ema200 (moneda sobre su EMA 200 en det_tf) | btc (BTC diario > SMA 200)
     max_adx: float = 0.0        # 0 = sin filtro de ADX
+    # "Temporadas" (idea de Keiner, 1-nov): operar solo cuando el mercado está lateral y la estrategia va bien.
+    max_er: float = 0.0         # lateral confirmado: eficiencia de Kaufman de las últimas 4N velas ≤ max_er (0 = off)
+    season_n: int = 0           # semáforo: los últimos n rangos "en sombra" (los vea o no el bot) suman > 0 (0 = off)
+    season_scope: str = "all"   # all = rangos de todas las monedas · coin = solo los de esa moneda
     min_range_atr: float = 2.0
     min_step_pct: float = 0.6
     # Cuenta (Capa 1 / Capa 3). No se optimizan.
@@ -101,19 +105,22 @@ class Variant:
         stop = f"stop piso−{self.stop_atr:g} ATR" if self.stop_atr > 0 else "SIN stop"
         tr = {"none": "", "ema200": " · sobre EMA200", "btc": " · BTC>SMA200"}[self.trend]
         adx = f" · ADX<{self.max_adx:g}" if self.max_adx else ""
+        er = f" · lateral ER≤{self.max_er:g}" if self.max_er else ""
+        sea = (f" · semáforo {self.season_n} rangos {'todas' if self.season_scope == 'all' else 'la moneda'}"
+               if self.season_n else "")
         return (f"{self.det_tf} · rango {self.lookback} velas · ancho {self.w_min:g}-{self.w_max:g}% · "
-                f"{self.touches}+{self.touches} toques · {kind} · {stop}{tr}{adx}")
+                f"{self.touches}+{self.touches} toques · {kind} · {stop}{tr}{adx}{er}{sea}")
 
     def det_key(self) -> tuple:
         return (self.det_tf, self.lookback, self.w_min, self.w_max, self.touches, self.tol, self.trend,
-                self.max_adx, self.min_range_atr, self.min_step_pct, self.levels, self.edge)
+                self.max_adx, self.min_range_atr, self.min_step_pct, self.levels, self.edge, self.max_er)
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # DATOS
 # ════════════════════════════════════════════════════════════════════════════
 def resample(df: pd.DataFrame, tf: str) -> pd.DataFrame:
-    rule = {"15m": "15min", "1h": "1h", "4h": "4h", "1d": "1D"}[tf]
+    rule = {"15m": "15min", "30m": "30min", "1h": "1h", "4h": "4h", "1d": "1D"}[tf]
     g = df.set_index("time").resample(rule, label="left", closed="left")
     out = pd.DataFrame({"open": g.open.first(), "high": g.high.max(), "low": g.low.min(),
                         "close": g.close.last(), "volume": g.volume.sum()}).dropna()
@@ -203,6 +210,11 @@ def detect(df15: pd.DataFrame, v: Variant, grid_time: pd.DatetimeIndex, btc_ok: 
             ok &= (ind.adx14.to_numpy() < v.max_adx) & (ind.adx14.to_numpy() > 0)
         if v.trend == "ema200":
             ok &= close > ind.ema200.to_numpy()
+        if v.max_er:
+            m_er = 4 * n
+            cs = d.close
+            er = (cs - cs.shift(m_er)).abs() / cs.diff().abs().rolling(m_er).sum()
+            ok &= (er <= v.max_er).to_numpy()
     ok &= ~np.isnan(width)
     idx = np.flatnonzero(ok)
     if not len(idx):
@@ -333,6 +345,34 @@ def all_episodes(m: Market, v: Variant) -> list[dict]:
 # ════════════════════════════════════════════════════════════════════════════
 # CUENTA ÚNICA (Capa 1 + Capa 3)
 # ════════════════════════════════════════════════════════════════════════════
+def _season_gate(eps: list[dict], v: Variant, colset):
+    """Semáforo de temporadas. El bot sigue todos los rangos "en sombra" (sin dinero) y solo opera de verdad si los
+    últimos season_n rangos que YA terminaron (de todas las monedas o de esa moneda) suman ganancia. Solo usa el
+    pasado: un rango cuenta cuando su vela de cierre ya pasó."""
+    if not v.season_n:
+        return None
+    sh = [e for e in eps if e["fees"] > 0 and (colset is None or e["coin"] in colset)]
+    groups: dict = {}
+    for e in sh:
+        groups.setdefault("all" if v.season_scope == "all" else e["coin"], []).append(e)
+    tables = {}
+    for k, lst in groups.items():
+        lst.sort(key=lambda e: e["end"])
+        ends = np.array([e["end"] for e in lst])
+        cum = np.r_[0.0, np.cumsum([e["ret"] for e in lst])]
+        tables[k] = (ends, cum)
+    n = v.season_n
+
+    def ok(t: int, coin: int) -> bool:
+        tab = tables.get("all" if v.season_scope == "all" else coin)
+        if tab is None:
+            return False
+        ends, cum = tab
+        k = int(np.searchsorted(ends, t, side="left"))      # terminados antes de la vela t
+        return k >= n and cum[k] - cum[k - n] > 0
+    return ok
+
+
 def account(m: Market, eps: list[dict], v: Variant, balance: float = 500.0, lo: int = 0, hi: int | None = None,
             cols=None, keep: bool = False) -> dict:
     hi = len(m.time) if hi is None else hi
@@ -348,6 +388,8 @@ def account(m: Market, eps: list[dict], v: Variant, balance: float = 500.0, lo: 
     taken, fees, rts, reasons = [], 0.0, 0, {}
     busy = np.zeros(span + 1, int)
     colset = None if cols is None else set(cols)
+    gate = _season_gate(eps, v, colset)
+    cand = passed = 0
 
     def close_until(t):
         nonlocal bal, peak, used, losses, halt_until, killed, killed_at, day_halt, fees, rts
@@ -389,6 +431,10 @@ def account(m: Market, eps: list[dict], v: Variant, balance: float = 500.0, lo: 
         day_peak = max(day_peak, bal)
         if killed or day_halt or t <= halt_until or len(active) >= v.max_open:
             continue
+        cand += 1
+        if gate is not None and not gate(t, e["coin"]):
+            continue
+        passed += 1
         rp = v.risk_pct / 2 if losses == 2 else v.risk_pct
         cap = bal * v.max_alloc_pct / 100
         alloc = min(cap, bal * rp / 100 / e["worst"], bal * 0.85 - used) if v.stop_atr > 0 else \
@@ -409,7 +455,8 @@ def account(m: Market, eps: list[dict], v: Variant, balance: float = 500.0, lo: 
     res = {"return_pct": (bal / balance - 1) * 100, "max_dd_pct": dd,
            "episodes": len(taken) if keep else sum(reasons.values()), "ranges_seen": sum(reasons.values()),
            "roundtrips": rts, "fees_usd": fees, "final_balance": bal, "killed_at": killed_at,
-           "reasons": reasons, "busy_pct": float((busy[:span] > 0).mean() * 100) if span else 0.0}
+           "reasons": reasons, "busy_pct": float((busy[:span] > 0).mean() * 100) if span else 0.0,
+           "gate_open_pct": passed / cand * 100 if cand else 0.0}
     if keep:
         res["trades_df"] = pd.DataFrame(taken)
         w, ls = out_pnls[out_pnls > 0].sum(), -out_pnls[out_pnls < 0].sum()
@@ -452,7 +499,19 @@ def grid_short() -> list[Variant]:
     return out
 
 
-GRIDS = {"normal": grid, "corto": grid_short}
+def grid_seasons() -> list[Variant]:
+    """Temporadas (Keiner, 1-nov): las mejores formas de 15 y 30 min, pero operando solo cuando el lateral está
+    confirmado (eficiencia baja) y/o el semáforo de rangos en sombra está en verde. 48 variantes."""
+    shapes = [("15m", 96, 2.0, 6.0), ("15m", 48, 1.5, 5.0), ("30m", 48, 2.0, 6.0), ("30m", 96, 3.0, 8.0)]
+    seasons = [(0, "all"), (20, "all"), (5, "coin")]
+    out = []
+    for (tf, n, w0, w1), lv, er, (sn, sc) in itertools.product(shapes, (1, 2), (0.0, 0.3), seasons):
+        out.append(Variant(det_tf=tf, lookback=n, w_min=w0, w_max=w1, touches=2, levels=lv, stop_atr=1.5,
+                           max_er=er, season_n=sn, season_scope=sc))
+    return out
+
+
+GRIDS = {"normal": grid, "corto": grid_short, "temporadas": grid_seasons}
 
 
 def score(r: dict) -> float:
@@ -587,13 +646,13 @@ def report_md(finals: list[dict], meta: dict) -> str:
                  f"{f['groups_pos']}/{len(f['groups'])} | {'SÍ' if f['passed'] else 'no'} |")
     L += ["", "## Por año y sin stop", "",
           "| Variante | " + " | ".join(str(y) for y in finals[0]["years"]) + " | Misma escalera SIN stop % "
-          "(caída máx.) | Cómo terminaron los rangos |",
-          "| --- | " + " | ".join("---" for _ in finals[0]["years"]) + " | --- | --- |"]
+          "(caída máx.) | Semáforo en verde % | Cómo terminaron los rangos |",
+          "| --- | " + " | ".join("---" for _ in finals[0]["years"]) + " | --- | --- | --- |"]
     for f in finals:
         ns = f["nostop"]
         why = ", ".join(f"{k} {n}" for k, n in sorted(f["full"]["reasons"].items()))
         L.append(f"| {f['variant'].label()} | " + " | ".join(_f(x) for x in f["years"].values())
-                 + f" | {_f(ns['return_pct'])} ({ns['max_dd_pct']:.1f}) | {why} |")
+                 + f" | {_f(ns['return_pct'])} ({ns['max_dd_pct']:.1f}) | {f['full']['gate_open_pct']:.0f} | {why} |")
     bv, br = meta["best_full"]
     L += ["", f"Referencia (mirando el futuro, NO vale para elegir): la mejor variante del periodo completo fue "
               f"«{bv.label()}» con {_f(br['full']['return_pct'])}% y caída {br['full']['max_dd_pct']:.1f}%.", "",
@@ -617,7 +676,8 @@ def main(argv=None) -> int:
     ap.add_argument("--balance", type=float, default=500.0)
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--set", choices=tuple(GRIDS), default="normal",
-                    help="normal = rangos en 1 h / 4 h; corto = rangos en velas de 15 min")
+                    help="normal = rangos en 1 h / 4 h; corto = rangos en velas de 15 min; "
+                         "temporadas = 15/30 min con lateral confirmado y semáforo")
     a = ap.parse_args(argv)
     symbols = [s.strip().upper() for s in a.symbols.split(",") if s.strip()]
     if a.mode == "download":

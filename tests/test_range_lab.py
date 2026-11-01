@@ -121,6 +121,23 @@ class TestRangeLab(unittest.TestCase):
         r = self.run_acc(self.rng, v)
         self.assertGreater(r["episodes"], 40)
 
+    def test_season_gate_uses_only_finished_ranges(self):
+        v = rl.Variant(det_tf="30m", lookback=48, w_min=2, w_max=6, levels=1, stop_atr=1.5, season_n=5)
+        eps = rl.all_episodes(self.walk, v)
+        gate = rl._season_gate(eps, v, None)
+        traded = [e for e in eps if e["fees"] > 0]
+        t = traded[10]["i0"]
+        done = sorted((e for e in traded if e["end"] < t), key=lambda e: e["end"])[-5:]
+        self.assertEqual(gate(t, 0), sum(e["ret"] for e in done) > 0)
+        self.assertFalse(gate(traded[0]["i0"], 0))            # sin historia: en rojo
+        r = self.run_acc(self.walk, v)
+        self.assertLess(r["gate_open_pct"], 100)
+
+    def test_lateral_filter_reduces_ranges(self):
+        base = rl.Variant(det_tf="30m", lookback=48, w_min=2, w_max=6, levels=1)
+        er = rl.replace(base, max_er=0.2)
+        self.assertLessEqual(len(rl.all_episodes(self.walk, er)), len(rl.all_episodes(self.walk, base)))
+
     def test_run_writes_report(self):
         with tempfile.TemporaryDirectory() as d:
             syms = ["BTCUSDT"] + [f"C{k}USDT" for k in range(5)]

@@ -58,6 +58,15 @@ Rangos más cortos (detectados en velas de 15 min, de 6 a 24 horas, pedido de Ke
 sudo -u ingresosbot nice -n 10 .venv/bin/python range_lab.py run --set corto --csv-dir data/cazador/velas --out-dir data/rango/informes_15m --workers 2
 ```
 
+"Temporadas" (idea de Keiner, 1-nov): las mejores formas de 15 y 30 min, operando solo cuando el lateral está
+confirmado (la moneda se movió de lado: eficiencia de Kaufman ≤ 0,3 en las últimas 4N velas) y/o cuando un
+semáforo está en verde (el bot sigue todos los rangos en sombra, sin dinero, y solo opera si los últimos 20 rangos
+de todas las monedas, o los últimos 5 de esa moneda, suman ganancia):
+
+```
+sudo -u ingresosbot nice -n 10 .venv/bin/python range_lab.py run --set temporadas --csv-dir data/cazador/velas --out-dir data/rango/informes_temporadas --workers 1
+```
+
 La descarga solo baja lo que falta desde la última vez (y PAXG completo, unos minutos). La corrida tarda unos
 20-40 minutos y no toca a los bots que están encendidos. Para ver el resultado:
 
