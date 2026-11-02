@@ -6,7 +6,15 @@
     "service": "ingresosbot",
     "db": "data/nathalia_state.db",
     "interval": "4h",
-    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"],
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT",
+      "ADAUSDT",
+      "DOGEUSDT"
+    ],
     "params": "deploy/nathalia_params.json",
     "balance": 500,
     "summary": "Desde el 30-oct-2026: las reglas de rupturas de Trend Rider en velas de 4 horas, pero vigilando 7 monedas. Antes usaba las reglas oficiales (retroceso + RSI), que en 4 días perdieron un 2,9% y en el último año entre 22% y 50%.",
@@ -24,7 +32,20 @@
     "service": "ingresosbot-trend",
     "db": "data/trend_state.db",
     "interval": "4h",
-    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "PAXGUSDT", "DOGEUSDT", "ADAUSDT", "LINKUSDT", "TRXUSDT", "AVAXUSDT", "LTCUSDT"],
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT",
+      "PAXGUSDT",
+      "DOGEUSDT",
+      "ADAUSDT",
+      "LINKUSDT",
+      "TRXUSDT",
+      "AVAXUSDT",
+      "LTCUSDT"
+    ],
     "params": "deploy/trend_params.json",
     "balance": 500,
     "summary": "Sigue tendencias con fuerza en velas de 4 horas sobre 12 monedas y oro: compra cuando el precio rompe su máximo de 20 velas con ADX alto y deja correr la ganancia.",
@@ -42,7 +63,14 @@
     "service": "ingresosbot-tortuga",
     "db": "data/tortuga_state.db",
     "interval": "1d",
-    "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "PAXGUSDT"],
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "SOLUSDT",
+      "BNBUSDT",
+      "XRPUSDT",
+      "PAXGUSDT"
+    ],
     "params": "deploy/tortuga_params.json",
     "balance": 500,
     "summary": "Rupturas de 30 días en velas diarias, hacia arriba y hacia abajo, solo cuando la tendencia tiene fuerza. Incluye oro tokenizado (PAXG). Los cortos son solo en papel: con dinero real requieren Futuros 1x.",
@@ -70,5 +98,23 @@
       "Stop a -15%; luego trailing a 15% bajo el máximo desde la entrada (solo sube). Sale como mucho a los 7 días. Usa el 10% del saldo por operación (5% en THROTTLED), máximo 3 a la vez, con la Capa 1 y apagado automático si el saldo cae 20% desde su máximo."
     ],
     "backtest": "242 listados de 2023-01 a 2026-10 con 500 USD: +28,3% con caída máx. 8,7%, 53 operaciones, gana 47%, PF 1,95; +6,7% sin sus 3 mejores operaciones y 19 de 20 sorteos positivos. Cuidado: fue la 4.ª-5.ª mejor de 208 reglas probadas y en 2026 las rupturas han ido flojas; comprar y mantener 30 días un listado daba una mediana de -29%."
+  },
+  {
+    "id": "rango",
+    "name": "Rupturas de rango",
+    "service": "ingresosbot-rango",
+    "db": "data/rango_state.db",
+    "interval": "4h",
+    "symbols": [],
+    "dynamic_symbols": true,
+    "params": "deploy/rango_params.json",
+    "balance": 500,
+    "summary": "Desde el 2-nov-2026, en papel: la idea de Keiner de aprovechar los laterales, pero al revés de lo intuitivo. Espera un lateral confirmado de 15 días y entra a favor cuando se rompe (compra si rompe arriba, corto en papel si rompe abajo). Vigila 41 monedas y el oro.",
+    "how": [
+      "Cada 4 horas busca laterales: techo y piso de las últimas 90 velas de 4 h, ancho entre 6% y 25%, y el precio tocó el piso y el techo al menos 2 veces cada uno. Reserva dinero para como mucho 3 rangos a la vez.",
+      "Cada 15 minutos vigila los rangos: si cierra sobre el techo + 0,5 ATR compra; si cae bajo el piso − 1,5 ATR vende en corto (solo papel: con dinero real exige Futuros). A los 30 días sin ruptura descarta el rango.",
+      "Stop inicial en la mitad del rango y luego trailing a 3 ATR del mejor precio. Arriesga 1,5% del saldo por rango (máx. 30% por rango), con la Capa 1 y apagado automático si el saldo cae 20% desde su máximo."
+    ],
+    "backtest": "41 monedas + oro, 2024-01 a 2026-10, 500 USD: +17,6% con caída máx. 5,4%, PF 1,37, 191 rangos, 16 de 20 grupos de monedas positivos; 2024 +3,4%, 2025 +12,9%, 2026 −0,4%. Comprar y mantener: −24,9%. Gana poco pero casi no cae; los rebotes dentro del rango (312 variantes) perdían siempre."
   }
 ]

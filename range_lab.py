@@ -190,12 +190,10 @@ def _touch_events(win: np.ndarray, thr: np.ndarray, below: bool) -> np.ndarray:
     return zone[:, 0].astype(int) + (zone[:, 1:] & ~zone[:, :-1]).sum(axis=1)
 
 
-def detect(df15: pd.DataFrame, v: Variant, grid_time: pd.DatetimeIndex, btc_ok: np.ndarray):
-    d = resample(df15, v.det_tf) if v.det_tf != BASE else df15.copy()
+def range_mask(d: pd.DataFrame, v: Variant):
+    """Sobre velas de la temporalidad de detección: (ok, piso, techo, ATR) vela a vela. La usa también el bot en
+    papel (range_bot.py) con la última vela cerrada, para que decida exactamente como el laboratorio."""
     n = v.lookback
-    empty = (np.array([], int), np.array([]), np.array([]), np.array([]))
-    if len(d) <= n + 30:
-        return empty
     ind = q.compute_indicators(d, q.Params())
     hi = d.high.rolling(n).max().to_numpy()
     lo = d.low.rolling(n).min().to_numpy()
@@ -228,6 +226,15 @@ def detect(df15: pd.DataFrame, v: Variant, grid_time: pd.DatetimeIndex, btc_ok: 
             er = (cs - cs.shift(m_er)).abs() / cs.diff().abs().rolling(m_er).sum()
             ok &= (er <= v.max_er).to_numpy()
     ok &= ~np.isnan(width)
+    return ok, lo, hi, atr
+
+
+def detect(df15: pd.DataFrame, v: Variant, grid_time: pd.DatetimeIndex, btc_ok: np.ndarray):
+    d = resample(df15, v.det_tf) if v.det_tf != BASE else df15.copy()
+    empty = (np.array([], int), np.array([]), np.array([]), np.array([]))
+    if len(d) <= v.lookback + 30:
+        return empty
+    ok, lo, hi, atr = range_mask(d, v)
     idx = np.flatnonzero(ok)
     if not len(idx):
         return empty

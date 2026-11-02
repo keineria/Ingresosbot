@@ -51,7 +51,7 @@ class Rec:
 class TestBotsFile(unittest.TestCase):
     def test_repo_bots_file(self):
         bots = load_bots(ROOT / "deploy" / "bots.json")
-        self.assertEqual([b["id"] for b in bots], ["oficial", "trend", "tortuga", "listados"])
+        self.assertEqual([b["id"] for b in bots], ["oficial", "trend", "tortuga", "listados", "rango"])
         for b in bots:
             self.assertTrue(b["summary"] and b["how"] and b["backtest"], b["id"])
             if not b.get("dynamic_symbols"):                     # "Nuevos listados" espera el nombre que elija Keiner
@@ -62,6 +62,13 @@ class TestBotsFile(unittest.TestCase):
         self.assertEqual((listados["service"], listados["db"], listados["balance"], listados["dynamic_symbols"]),
                          ("ingresosbot-listados", "data/listados_state.db", 500, True))
         self.assertTrue((ROOT / "deploy" / "ingresosbot-listados.service").exists())
+        rango = find_bot("rango", ROOT / "deploy" / "bots.json")
+        self.assertEqual((rango["service"], rango["db"], rango["balance"], rango["dynamic_symbols"]),
+                         ("ingresosbot-rango", "data/rango_state.db", 500, True))
+        self.assertTrue((ROOT / "deploy" / "ingresosbot-rango.service").exists())
+        # El panel lee "params" como Params del motor: las reglas propias del bot van en deploy/rango_reglas.json.
+        for b in json.loads((ROOT / "deploy" / "bots.json").read_text(encoding="utf-8")):
+            bot_settings(b)
         cfg, p = bot_settings(find_bot("tortuga", ROOT / "deploy" / "bots.json"))
         self.assertEqual((cfg.interval, cfg.db_path, cfg.initial_balance), ("1d", "data/tortuga_state.db", 500.0))
         self.assertIn("PAXGUSDT", cfg.symbols)

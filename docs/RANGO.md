@@ -86,3 +86,34 @@ cat /opt/Ingresosbot/data/rango/informes/informe_rango.md
 
 Archivos: `informe_rango.md` (resumen y veredicto), `variantes_rango.csv` (todas las variantes),
 `rangos_mejor.csv` (cada rango de la mejor variante) y, solo si alguna pasa, `rango_params_candidato.json`.
+
+## Resultado y bot en papel "Rupturas de rango"
+
+Los rebotes no sirven en ninguna temporalidad (0/312 variantes, también con "temporadas"). La ruptura del lateral
+en velas de 4 h sí pasa (corrida 5, vecindario de 90 variantes con 20 grupos de monedas y años): candidata
+**rango de 90 velas de 4 h (unos 15 días), ancho 6-25%, al menos 2 toques en piso y techo; si cierra sobre el techo
++ 0,5 ATR compra, si cae bajo el piso − 1,5 ATR abre un corto (papel); stop en la mitad del rango y luego trailing a
+3 ATR; riesgo 1,5%**: +17,6% de 2024-01 a 2026-10, caída máxima 5,4%, 191 rangos, 16/20 grupos positivos, nunca
+apagada (2024 +3,4%, 2025 +12,9%, 2026 −0,4%). Evidencia modesta: la mitad del vecindario es negativa y se parece a
+Trend Rider / Nathalia (también rupturas en 4 h), así que puede ganar y perder en las mismas semanas que ellos.
+
+`range_bot.py` corre esas reglas (`deploy/rango_reglas.json`) en **papel** con 500 USD (base `data/rango_state.db`),
+con su tarjeta "Rupturas de rango" en el panel y avisos de Telegram con el prefijo `[Rupturas de rango]`:
+"📐 LATERAL CONFIRMADO" cuando arma un rango, y la compra / venta en corto cuando se rompe. Vigila las 41 monedas
+del laboratorio, como mucho 3 rangos a la vez, Capa 1 (rachas y caída diaria) y apagado automático si el saldo cae
+20% desde su máximo. Revisa cada 15 minutos si un rango armado se rompió; un rango que no se rompe en 30 días se
+descarta. Comisión 0,1% por orden.
+
+Encenderlo en el VPS, **solo después de unir el PR en GitHub** (Terminal de hPanel, como `root`):
+
+```
+sudo git -C /opt/Ingresosbot pull
+sudo cp /opt/Ingresosbot/deploy/ingresosbot-rango.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ingresosbot-rango
+tail -n 20 /opt/Ingresosbot/logs/bot-rango.log
+```
+
+La tarjeta aparece sola en el panel en un minuto (bots.json se recarga solo). Lo normal es que pase días sin operar:
+arma pocos rangos (unos 6 al mes entre todas las monedas). Para apagarlo: botón *Apagar* de su tarjeta, o
+`sudo systemctl disable --now ingresosbot-rango`.
