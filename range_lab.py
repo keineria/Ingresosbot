@@ -625,7 +625,22 @@ def grid_breakout() -> list[Variant]:
     return out
 
 
-GRIDS = {"normal": grid, "corto": grid_short, "temporadas": grid_seasons, "ruptura": grid_breakout}
+def grid_breakout_4h() -> list[Variant]:
+    """Confirmación de la ruptura en 4 h (2-nov): la corrida 'ruptura' mostró que en 4 h varias variantes ganan en las
+    dos mitades, pero ninguna pasó por los 20 grupos. Aquí se mide TODO el vecindario (5 formas × 3 stops × 3
+    trailings × largo / largo+corto, riesgo 1,5%, sin rebotes) con la prueba completa: si la idea es real, debe
+    funcionar en buena parte del vecindario, no solo en una combinación suelta. 90 variantes; correr con --top 90."""
+    shapes = [("4h", 30, 3.0, 12.0), ("4h", 45, 3.0, 12.0), ("4h", 60, 4.0, 15.0), ("4h", 75, 5.0, 20.0),
+              ("4h", 90, 6.0, 25.0)]
+    out = []
+    for (tf, n, w0, w1), k, tr, short in itertools.product(shapes, (0.5, 1.0, 1.5), (3.0, 4.0, 5.0), (False, True)):
+        out.append(Variant(det_tf=tf, lookback=n, w_min=w0, w_max=w1, touches=2, levels=0, stop_atr=k,
+                           brk_long=True, brk_short=short, trail_atr=tr))
+    return out
+
+
+GRIDS = {"normal": grid, "corto": grid_short, "temporadas": grid_seasons, "ruptura": grid_breakout,
+         "ruptura4h": grid_breakout_4h}
 
 
 def score(r: dict) -> float:
@@ -709,6 +724,11 @@ def run(csv_dir: str, symbols, out_dir: str, trade_from: str, balance: float, wo
         passed = (fu["return_pct"] > 0 and r["valid"]["return_pct"] > 0 and gpos >= 15 and fu["max_dd_pct"] < 20
                   and fu["episodes"] >= 40)
         finals.append({"variant": v, **r, **e, "groups_pos": gpos, "passed": passed})
+    pd.DataFrame([{"label": f["variant"].label(), "train": f["train"]["return_pct"], "valid": f["valid"]["return_pct"],
+                   "full": f["full"]["return_pct"], "max_dd": f["full"]["max_dd_pct"], "episodes": f["full"]["episodes"],
+                   "pf": f["full"]["profit_factor"], "groups_pos": f["groups_pos"], "passed": f["passed"],
+                   "killed_at": f["full"]["killed_at"], **{f"y{y}": r for y, r in f["years"].items()}}
+                  for f in finals]).to_csv(Path(out_dir) / "finales_rango.csv", index=False)
     rows = [{"label": v.label(), **asdict(v),
              **{f"{w}_{k}": x for w in ("train", "valid", "full") for k, x in r[w].items() if k != "reasons"}}
             for v, r in res]
@@ -747,7 +767,11 @@ def report_md(finals: list[dict], meta: dict) -> str:
          f"{_f(meta['bh_full'])}%, validación {_f(meta['bh_valid'])}%.", "",
          f"De {meta['n_variants']} variantes: {meta['train_pos']} positivas en entrenamiento, {meta['valid_pos']} en "
          f"validación y {meta['full_pos']} en el periodo completo.", "",
-         "## Las 5 mejores del entrenamiento", "",
+         f"Pasan todas las condiciones: {sum(f['passed'] for f in finals)} de {len(finals)} medidas a fondo "
+         f"(largo solo: {sum(f['passed'] for f in finals if not f['variant'].brk_short)}, "
+         f"largo+corto: {sum(f['passed'] for f in finals if f['variant'].brk_short)}). Positivas en entrenamiento Y "
+         f"validación: {sum(f['train']['return_pct'] > 0 and f['valid']['return_pct'] > 0 for f in finals)}.", "",
+         f"## Las {len(finals)} mejores del entrenamiento", "",
          "| Variante | Entren. % | Valid. % | Completo % | Caída máx. % | Rangos | Idas y vueltas | Acierto % | "
          "PF | Comisiones USD | Grupos > 0 | ¿Pasa? |",
          "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
@@ -789,6 +813,7 @@ def main(argv=None) -> int:
     ap.add_argument("--trade-from", default="2024-01-01")
     ap.add_argument("--balance", type=float, default=500.0)
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--top", type=int, default=5, help="cuántas (por entrenamiento) pasan a la prueba completa")
     ap.add_argument("--set", choices=tuple(GRIDS), default="normal",
                     help="normal = rangos en 1 h / 4 h; corto = rangos en velas de 15 min; "
                          "temporadas = 15/30 min con lateral confirmado y semáforo; "
@@ -798,7 +823,8 @@ def main(argv=None) -> int:
     if a.mode == "download":
         print("\n".join(hl.download(a.csv_dir, symbols, BASE, a.since)))
     else:
-        print(run(a.csv_dir, symbols, a.out_dir, a.trade_from, a.balance, a.workers, variants=GRIDS[a.set]()))
+        print(run(a.csv_dir, symbols, a.out_dir, a.trade_from, a.balance, a.workers, variants=GRIDS[a.set](),
+                  top=a.top))
     return 0
 
 
