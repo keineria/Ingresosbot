@@ -1,0 +1,25 @@
+# systemd: bot "Rupturas de rango" (range_bot.py) en paper trading, EN PARALELO a los demás bots, con su propia
+# base (data/rango_state.db, 500 USD de papel). Espera laterales confirmados de 15 días en velas de 4 h y entra a
+# favor de la ruptura (docs/RANGO.md). Su tarjeta del panel sale de deploy/bots.json, id "rango".
+# deploy/install_almalinux.sh lo copia pero no lo activa. Para encenderlo:
+#   sudo systemctl enable --now ingresosbot-rango
+#   journalctl -u ingresosbot-rango -f       # ver el log en vivo
+# Comparte el .env solo para las alertas de Telegram, que llegan con el prefijo [Rupturas de rango].
+[Unit]
+Description=Ingresosbot Rupturas de rango paper trading 24/7 (velas de 4 h, revisa cada 15 min)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ingresosbot
+Group=ingresosbot
+WorkingDirectory=/opt/Ingresosbot
+ExecStart=/opt/Ingresosbot/.venv/bin/python range_bot.py --env-file .env --log-file logs/bot-rango.log
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

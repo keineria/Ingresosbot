@@ -1,0 +1,20 @@
+{
+  "note": "Bot Rupturas de rango (range_bot.py). Candidata de range_lab.py --set ruptura4h (2-nov-2026): +17,6% con caida max. 5,4%, 16/20 grupos. Mismos nombres de campo que range_lab.Variant.",
+  "det_tf": "4h",
+  "lookback": 90,
+  "w_min": 6.0,
+  "w_max": 25.0,
+  "touches": 2,
+  "tol": 0.15,
+  "levels": 0,
+  "stop_atr": 1.5,
+  "life_mult": 2.0,
+  "brk_long": true,
+  "brk_short": true,
+  "brk_atr": 0.5,
+  "trail_atr": 3.0,
+  "risk_pct": 1.5,
+  "max_alloc_pct": 30.0,
+  "max_open": 3,
+  "kill_dd_pct": 20.0
+}
