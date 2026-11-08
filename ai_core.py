@@ -154,6 +154,26 @@ CREATE TABLE IF NOT EXISTS ai_vote_locks (
     taken_at  TEXT NOT NULL,
     PRIMARY KEY (bot, ref)
 );
+-- Cuaderno de lecciones (ai_lessons.py): rasgos de cada señal votada y lecciones que se validan con resultados.
+CREATE TABLE IF NOT EXISTS ai_signal_features (
+    bot       TEXT NOT NULL,                 -- perfil (trend_params_4h...)
+    ref       TEXT NOT NULL,                 -- SYMBOL|opened_at, como el voto del analista
+    at        TEXT NOT NULL,
+    features  TEXT NOT NULL,                 -- JSON con los rasgos de ai_lessons.RASGOS
+    PRIMARY KEY (bot, ref)
+);
+CREATE TABLE IF NOT EXISTS ai_lessons (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TEXT NOT NULL,
+    profile     TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    conditions  TEXT NOT NULL,               -- JSON [{"rasgo", "op", "valor"}]
+    status      TEXT NOT NULL CHECK (status IN ('prueba', 'validada', 'descartada')),
+    evidence    TEXT,
+    reason      TEXT,
+    model       TEXT,
+    updated_at  TEXT
+);
 """
 
 
@@ -448,6 +468,55 @@ class AIStore:
         self.conn.commit()
         row = self.conn.execute("SELECT * FROM ai_hypotheses WHERE id = ?", (hyp_id,)).fetchone()
         return dict(row) if row else None
+
+    # ── Cuaderno de lecciones ───────────────────────────────────────────────
+    def save_features(self, profile: str, ref: str, at: str, features: dict) -> None:
+        self.conn.execute("INSERT OR IGNORE INTO ai_signal_features (bot, ref, at, features) VALUES (?, ?, ?, ?)",
+                          (profile, ref, at, json.dumps(features, ensure_ascii=False)))
+        self.conn.commit()
+
+    def resolved_signals(self, profile: str) -> list[dict]:
+        """Señales votadas con resultado y rasgos: [{"ref", "at", "outcome_r", "features"}], en orden."""
+        out = []
+        for r in self.conn.execute(
+                "SELECT d.ref, f.at, d.outcome_r, f.features FROM ai_decisions d JOIN ai_signal_features f "
+                "ON f.bot = d.bot AND f.ref = d.ref WHERE d.id IN (SELECT MIN(id) FROM ai_decisions "
+                "WHERE agent = 'analista' AND bot = ? AND outcome_r IS NOT NULL GROUP BY ref) ORDER BY f.at",
+                (profile,)):
+            try:
+                feats = json.loads(r["features"])
+            except json.JSONDecodeError:
+                continue
+            out.append({"ref": r["ref"], "at": r["at"], "outcome_r": float(r["outcome_r"]), "features": feats})
+        return out
+
+    def add_lesson(self, profile: str, text: str, conditions: list[dict], at: str, model: str | None) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO ai_lessons (created_at, profile, text, conditions, status, model, updated_at) "
+            "VALUES (?, ?, ?, ?, 'prueba', ?, ?)", (at, profile, text, json.dumps(conditions, ensure_ascii=False),
+                                                   model, at))
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def lessons(self, profile: str | None = None, status: str | tuple | None = None) -> list[dict]:
+        sql, args = "SELECT * FROM ai_lessons WHERE 1=1", []
+        if profile:
+            sql, args = sql + " AND profile = ?", args + [profile]
+        if status:
+            st = (status,) if isinstance(status, str) else tuple(status)
+            sql, args = sql + f" AND status IN ({', '.join('?' * len(st))})", args + list(st)
+        out = []
+        for r in self.conn.execute(sql + " ORDER BY id", args):
+            d = dict(r)
+            d["conditions"] = json.loads(d["conditions"])
+            d["evidence"] = json.loads(d["evidence"]) if d.get("evidence") else None
+            out.append(d)
+        return out
+
+    def update_lesson(self, lesson_id: int, status: str, evidence: dict, reason: str, at: str) -> None:
+        self.conn.execute("UPDATE ai_lessons SET status = ?, evidence = ?, reason = COALESCE(NULLIF(?, ''), reason), "
+                          "updated_at = ? WHERE id = ?", (status, json.dumps(evidence), reason, at, lesson_id))
+        self.conn.commit()
 
     # ── Votos del analista y del guardián de salidas ───────────────────────
     VOTES = {"analista": ("OK", "REDUCIR", "VETO"), "salida": ("MANTENER", "SALIR")}

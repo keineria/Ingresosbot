@@ -59,6 +59,7 @@ import numpy as np
 import pandas as pd
 
 import ai_autonomy as au
+import ai_lessons as al
 import quant_core_engine as q
 from ai_core import POTENCIA, AIClient, AIConfig, AIStore, Answer, cost_usd, env_flag, iso, utc_now
 from notifier import TELEGRAM_API, load_env_file
@@ -115,7 +116,9 @@ ANALISTA_SYSTEM = (
     "grave. VETO = no entrar, solo con un motivo concreto y fuerte en los datos (por ejemplo, un evento grave "
     "confirmado en los titulares o un movimiento ya extremo). Si dudas, vota OK. Cada voto se compara con el "
     "resultado real: en <historial> ves tus votos recientes y lo que pasó después; úsalo para calibrarte y no "
-    "repetir errores. Motivo en español, máximo 2 frases. " + UNTRUSTED_NOTE)
+    "repetir errores. En <lecciones> están las lecciones que ya se comprobaron con señales posteriores (cuántas "
+    "veces se cumplieron y cuánto habrían ahorrado): tenlas en cuenta, sin tratarlas como reglas fijas. "
+    "Motivo en español, máximo 2 frases. " + UNTRUSTED_NOTE)
 ANALISTA_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["voto", "confianza", "motivo"],
     "properties": {
@@ -343,6 +346,7 @@ class AgentSettings:
     stable_symbol: str = "USDCUSDT"
     stable_threshold_pct: float = 0.5
     auditor: bool = True
+    lessons: bool = True                    # cuaderno de lecciones (ai_lessons.py)
     weekly_weekday: int = 6                 # 0 = lunes ... 6 = domingo
     weekly_hour_utc: int = 2
     summary: bool = True
@@ -377,6 +381,7 @@ class AgentSettings:
         s.stable_symbol = (e("AI_ESTABLE_PAR", "") or s.stable_symbol).strip().upper()
         s.stable_threshold_pct = float(e("AI_ESTABLE_UMBRAL_PCT", "") or s.stable_threshold_pct)
         s.auditor = env_flag("AI_AUDITOR", True)
+        s.lessons = env_flag("AI_LECCIONES", True)
         s.summary = env_flag("AI_RESUMEN", True)
         s.summary_hour_utc = int(e("AI_RESUMEN_HORA_UTC", "") or s.summary_hour_utc)
         s.telegram_buttons = env_flag("AI_TELEGRAM_BOTONES", True)
@@ -599,6 +604,14 @@ def vote_history(store: AIStore, profile: str, agent: str, n: int = 8) -> list[d
     return out
 
 
+def shown_lessons(store: AIStore, profile: str) -> list[dict]:
+    """Lecciones validadas que ve el analista: las que más ahorraron, con su prueba."""
+    rows = sorted(store.lessons(profile, "validada"), key=lambda r: -((r["evidence"] or {}).get("ahorro_r") or 0))
+    return [{"leccion": r["text"], "condicion": al.describe(r["conditions"]),
+             "prueba": {k: (r["evidence"] or {}).get(k) for k in ("casos", "ahorro_r", "acierto", "azar")}}
+            for r in rows[:al.MAX_SHOWN]]
+
+
 def recent_headlines(store: AIStore, now: datetime, hours: float = 24.0, n: int = 15) -> list[str]:
     return [r["title"] for r in store.conn.execute(
         "SELECT title FROM ai_news_seen WHERE seen_at >= ? ORDER BY seen_at DESC LIMIT ?",
@@ -678,12 +691,14 @@ class AIGate:
             except Exception as exc:                      # sin BTC el voto sigue, con menos contexto
                 log.info("IA: sin contexto de BTC (%s)", exc)
         hist = vote_history(self.store, self.profile, "analista")
+        lessons = shown_lessons(self.store, self.profile)
         user = ("Señal que acaba de generar el motor (todo calculado por código):\n"
                 f"<datos>{json.dumps(ctx['senal'], ensure_ascii=False, default=str)}</datos>\n"
                 + (f"<mercado_btc>{json.dumps(market, ensure_ascii=False)}</mercado_btc>\n" if market else "")
                 + f"<historial>{json.dumps(hist, ensure_ascii=False)}</historial>\n"
-                f"<titulares>{json.dumps(ctx['titulares_24h'], ensure_ascii=False)}</titulares>")
-        return ctx, user
+                + (f"<lecciones>{json.dumps(lessons, ensure_ascii=False)}</lecciones>\n" if lessons else "")
+                + f"<titulares>{json.dumps(ctx['titulares_24h'], ensure_ascii=False)}</titulares>")
+        return ctx, user, market
 
     def _get_vote(self, symbol: str, interval: str, result: dict, df: pd.DataFrame, ref: str) -> dict | None:
         """El voto de esta señal: lo pide el primero que la ve (bot real o laboratorio); el otro lo reutiliza."""
@@ -700,7 +715,12 @@ class AIGate:
                 if existing:                              # SIN_IA: el otro proceso no obtuvo voto; no se insiste
                     return existing if existing["decision"] in AIStore.VOTES["analista"] else None
             return None
-        ctx, user = self._context_text(symbol, interval, result, df, now)
+        ctx, user, market = self._context_text(symbol, interval, result, df, now)
+        try:                                              # rasgos para validar lecciones (nunca frena el voto)
+            side = (result.get("order") or {}).get("side") or result.get("layer_2_market_regime", {}).get("signal")
+            self.store.save_features(self.profile, ref, iso(now), al.signal_features(ctx["senal"], df, market, side))
+        except Exception as exc:
+            log.warning("IA: no se guardaron los rasgos de %s (%s)", ref, exc)
         ans = self.client.ask("analista", ANALISTA_SYSTEM, user, ANALISTA_SCHEMA)
         mode = "laboratorio" if self.lab else self.analyst_mode
         if ans is None:
@@ -1305,6 +1325,95 @@ class AgentService:
                          f"{res['peor_caida_actual']:.1f}% vs {res['peor_caida_propuesta']:.1f}%." + apply)
         return res
 
+    # ── Cuaderno de lecciones ───────────────────────────────────────────────
+    def lessons_tick(self, now: datetime) -> dict:
+        """Cada hora valida las lecciones con cuentas; cada semana el auditor puede proponer nuevas."""
+        out: dict[str, Any] = {}
+        hour = now.strftime("%Y-%m-%dT%H")
+        if self.store.meta_get("lessons_checked") != hour:
+            self.store.meta_set("lessons_checked", hour)
+            out["validacion"] = self.validate_lessons(now)
+        if self.s.analyst_mode != "off" and self.client.available:
+            out["propuestas"] = self.propose_lessons(now)
+        return out
+
+    def validate_lessons(self, now: datetime) -> list[dict]:
+        changes = []
+        signals: dict[str, list[dict]] = {}
+        for lesson in self.store.lessons(status=("prueba", "validada")):
+            prof = lesson["profile"]
+            if prof not in signals:
+                signals[prof] = self.store.resolved_signals(prof)
+            ev = al.evaluate(lesson["conditions"], signals[prof], lesson["created_at"])
+            status, reason = al.next_status(lesson["status"], ev, lesson["created_at"], now)
+            self.store.update_lesson(lesson["id"], status, ev.as_dict(), reason, iso(now))
+            if status == lesson["status"]:
+                continue
+            changes.append({"id": lesson["id"], "perfil": prof, "de": lesson["status"], "a": status, "motivo": reason})
+            log.info("IA: lección #%s %s -> %s (%s)", lesson["id"], lesson["status"], status, reason)
+            if status == "validada":
+                self.tg.send(f"📘 LECCIÓN COMPROBADA [{profile_label(prof)}]\n{lesson['text']}\n"
+                             f"Regla: evitar si {al.describe(lesson['conditions'])}\n{ev.text()}.\n"
+                             "El analista la tendrá en cuenta desde ahora (sigue sin poder operar por su cuenta).")
+            elif lesson["status"] == "validada":
+                self.tg.send(f"📕 LECCIÓN RETIRADA [{profile_label(prof)}]\n{lesson['text']}\n{reason}.")
+        return changes
+
+    def propose_lessons(self, now: datetime, force: bool = False) -> dict:
+        """Una vez por semana y perfil, si hay al menos 10 señales nuevas con resultado."""
+        done = {}
+        for profile, prof in self.s.profiles().items():
+            if profile_off(prof):
+                continue
+            key = f"lessons_proposed:{profile}"
+            last = json.loads(self.store.meta_get(key) or "{}")
+            signals = self.store.resolved_signals(profile)
+            new = [x for x in signals if x["at"] > last.get("hasta", "")]
+            if not force and (len(new) < 10 or (last.get("at") and now - datetime.fromisoformat(last["at"])
+                                                < timedelta(days=7))):
+                continue
+            open_ = self.store.lessons(profile, ("prueba", "validada"))
+            if len([x for x in open_ if x["status"] == "prueba"]) >= al.MAX_OPEN_PER_PROFILE:
+                continue
+            recent = signals[-60:]
+            data = [{"par": x["features"].get("par"), "resultado_r": round(x["outcome_r"], 2),
+                     "rasgos": {k: v for k, v in x["features"].items() if k != "par"}} for x in recent]
+            book = [{"leccion": x["text"], "condicion": al.describe(x["conditions"]), "estado": x["status"]}
+                    for x in self.store.lessons(profile)][-20:]
+            user = (f"Estrategia: {profile_label(profile)}.\n"
+                    f"<rasgos_permitidos>{json.dumps(al.RASGOS, ensure_ascii=False)}</rasgos_permitidos>\n"
+                    f"<senales>{json.dumps(data, ensure_ascii=False)}</senales>\n"
+                    f"<cuaderno>{json.dumps(book, ensure_ascii=False)}</cuaderno>")
+            self.store.meta_set(key, json.dumps({"at": iso(now), "hasta": signals[-1]["at"] if signals else ""}))
+            ans = self.client.ask("auditor", al.LECCIONES_SYSTEM, user, al.LECCIONES_SCHEMA)
+            if ans is None:
+                self.store.record("lecciones", iso(now), bot=profile, decision="SIN_IA",
+                                  output={"errores": self.client.last_errors})
+                continue
+            added = []
+            for item in ans.data["lecciones"]:
+                conds = al.clean_conditions(item.get("condiciones"))
+                if conds is None or any(al.same_rule(conds, x["conditions"]) for x in self.store.lessons(profile)):
+                    continue
+                added.append(self.store.add_lesson(profile, item["texto"], conds, iso(now), ans.model))
+            self.store.record("lecciones", iso(now), bot=profile, decision=f"{len(added)}_NUEVAS", answer=ans)
+            done[profile] = added
+        return done
+
+    def lessons_text(self) -> str:
+        rows = self.store.lessons()
+        if not rows:
+            return ("El cuaderno está vacío: el auditor propone lecciones cuando una estrategia junta 10 señales "
+                    "nuevas con resultado.")
+        lines = []
+        for r in rows:
+            ev = r["evidence"] or {}
+            lines.append(f"#{r['id']} [{profile_label(r['profile'])}] {r['status'].upper()}: {r['text']}\n"
+                         f"    evitar si {al.describe(r['conditions'])} · {ev.get('casos', 0)} casos, "
+                         f"ahorro {ev.get('ahorro_r', 0):+.2f} R, acierto {ev.get('acierto', 0):.0%} "
+                         f"(azar {ev.get('azar', 0):.0%})" + (f" · {r['reason']}" if r.get("reason") else ""))
+        return "\n".join(lines)
+
     # ── Coordinador ─────────────────────────────────────────────────────────
     def daily_facts(self, now: datetime) -> dict:
         since = iso(now - timedelta(hours=24))
@@ -1338,6 +1447,7 @@ class AgentService:
             "analista": {p: self.store.vote_stats(p) for p in self.s.profiles()},
             "escalera": [{k: r[k] for k in ("nombre", "permiso", "estado", "cases", "needed", "benefit_r",
                                             "hit_rate")} for r in self.ladder_rows()],
+            "lecciones": {st: len(self.store.lessons(status=st)) for st in ("prueba", "validada", "descartada")},
             "salidas_pedidas_24h": self.store.conn.execute(
                 "SELECT COUNT(*) FROM ai_exit_requests WHERE created_at >= ?", (since,)).fetchone()[0],
         }
@@ -1365,6 +1475,10 @@ class AgentService:
                                          if active else "todo en sombra")
                          + f" · más avanzado: {au.LABELS[best['permiso']]} {best['cases']}/{best['needed']} casos "
                            f"({best['benefit_r']:+.2f} R)")
+        les = ia.get("lecciones") or {}
+        if any(les.values()):
+            lines.append(f"Cuaderno: {les.get('validada', 0)} lecciones comprobadas, {les.get('prueba', 0)} en prueba, "
+                         f"{les.get('descartada', 0)} descartadas")
         return "\n".join(lines)
 
     def daily_summary(self, now: datetime, force: bool = False) -> dict:
@@ -1474,6 +1588,7 @@ class AgentService:
                          ("votos", lambda: self.resolve_votes(now)),
                          ("salidas", lambda: self.exit_votes(now)),
                          ("escalera", lambda: self.ladder(now)),
+                         ("lecciones", lambda: self.lessons_tick(now) if self.s.lessons else None),
                          ("auditor", lambda: self.audit_trades(now) if self.s.auditor else None),
                          ("semanal", lambda: self.weekly_audit(now) if self.s.auditor else None),
                          ("resumen", lambda: self.daily_summary(now) if self.s.summary else None)):
@@ -1516,6 +1631,8 @@ class AgentService:
                 "hypotheses": self.store.hypotheses()[-5:],
                 "analyst_stats": {p: self.store.vote_stats(p) for p in self.s.profiles()},
                 "escalera": self.ladder_rows(),
+                "lecciones": [{k: r[k] for k in ("id", "profile", "status", "text", "evidence", "reason")}
+                              for r in self.store.lessons()],
                 "exit_requests": [dict(r) for r in self.store.conn.execute(
                     "SELECT * FROM ai_exit_requests ORDER BY id DESC LIMIT 10")],
                 "last_decisions": self.store.decisions(limit=10)}
@@ -1534,6 +1651,8 @@ COST_ASSUMPTIONS = {
     "salida": (85, 2000, {"low": 600, "medium": 1200, "high": 2500}),
     "auditor": (4, 3000, {"low": 800, "medium": 1500, "high": 3000}),
     "auditor_semanal": (8.6, 6000, {"low": 1500, "medium": 2000, "high": 4000}),
+    # Cuaderno de lecciones: una propuesta por semana y estrategia, con el modelo del auditor
+    "lecciones": (8.6, 9000, {"low": 800, "medium": 1500, "high": 3000}),
 }
 
 
@@ -1551,7 +1670,7 @@ def estimate_costs(store: AIStore | None, now: datetime) -> dict:
     out = {}
     for name, tasks in POTENCIA.items():
         rows, total = {}, 0.0
-        for task, (model, effort) in tasks.items():
+        for task, (model, effort) in list(tasks.items()) + [("lecciones", tasks["auditor"])]:
             calls, tin, outs = COST_ASSUMPTIONS[task]
             tout = outs.get(effort, outs["medium"])
             if task in measured:
@@ -1580,6 +1699,7 @@ def ai_summary(store: AIStore, cfg: AIConfig, settings: AgentSettings, now: date
             "analyst_stats": {p: store.vote_stats(p) for p in settings.profiles()},
             "potencia": cfg.potencia,
             "escalera": store.permissions(),
+            "lecciones": store.lessons(),
             "pending_exits": [dict(r) for r in store.conn.execute(
                 "SELECT * FROM ai_exit_requests WHERE status = 'pendiente' ORDER BY id")],
             "last_decisions": last}
@@ -1588,7 +1708,7 @@ def ai_summary(store: AIStore, cfg: AIConfig, settings: AgentSettings, now: date
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Agentes de IA de Ingresosbot (asesoran; nunca operan).")
     ap.add_argument("command", choices=["run", "probar", "vigia", "resumen", "auditoria", "estado", "escalera",
-                                        "precio"])
+                                        "precio", "lecciones"])
     ap.add_argument("--env-file", default=".env")
     ap.add_argument("--log-file")
     args = ap.parse_args(argv)
@@ -1607,6 +1727,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "escalera":
         print(svc.ladder_text(svc.ladder_rows()))
+        return 0
+    if args.command == "lecciones":
+        svc.validate_lessons(now)
+        print(svc.lessons_text())
         return 0
     if args.command == "precio":
         est = estimate_costs(svc.store, now)

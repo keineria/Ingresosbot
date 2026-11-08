@@ -66,16 +66,37 @@ ganarse en 4 a 6 meses**, y solo si la IA de verdad acierta) y unas 3 en Tortuga
 En cada voto, el analista y el guardián ven sus últimos 8 votos y lo que pasó después. Además el analista ve
 cómo va BTC (rendimiento a 1, 7 y 30 días y si está sobre su media de 200 días) y los titulares del día.
 
+### Cuaderno de lecciones (memoria larga)
+
+Los últimos 8 votos son memoria corta. El cuaderno guarda lo que se aprende a la larga, pero solo si se comprueba
+con dinero:
+
+1. Al votar cada señal, el código anota sus rasgos: ADX, RSI, volatilidad, distancia a la EMA200, cómo va el par
+   y cómo va BTC.
+2. Una vez por semana, si la estrategia juntó 10 señales nuevas con resultado, el auditor las mira y propone como
+   mucho 2 lecciones del tipo "evitar señales con ADX < 20". Solo puede usar esos rasgos, así que cada lección se
+   puede comprobar con cuentas.
+3. La lección empieza **en prueba** y se mide solo con señales que llegan **después** de escribirla. Evitar una
+   que perdió -0.8 R ahorra +0.8 R; evitar una que ganó +2.3 R cuesta -2.3 R.
+4. Con 8 casos, si ahorró dinero y acertó 10 puntos más que el azar, queda **comprobada** y te llega un 📘 por
+   Telegram. Si no, se descarta. Una comprobada que vuelve a perder dinero se retira (📕). Si en 120 días no junta
+   casos, también se descarta.
+5. El analista solo ve las comprobadas (las 6 que más ahorraron). Si con ellas vota mejor, lo mide la escalera.
+
+Ver el cuaderno: `sudo -u ingresosbot .venv/bin/python ai_agents.py lecciones`. Apagarlo: `AI_LECCIONES=false`.
+Cuesta unos 0.28 USD al mes (Sonnet 5.5, una consulta por semana y estrategia).
+
 ## Cuánto cuesta
 
 | Potencia (`AI_POTENCIA`) | Modelos | USD/mes aprox. | Tope por defecto | Sobre 500 USD de capital |
 |---|---|---|---|---|
-| economica | Sonnet en entradas y auditoría, Haiku en el resto | 0.90 | 2 | 0.18% al mes |
-| **equilibrada** (por defecto) | **Opus** en entradas y auditoría semanal, Sonnet en salidas | 3.70 | 5 | 0.74% al mes |
-| maxima | Opus en casi todo | 9.00 | 12 | 1.8% al mes |
+| economica | Sonnet en entradas y auditoría, Haiku en el resto | 1.15 | 2 | 0.23% al mes |
+| **equilibrada** (por defecto) | **Opus** en entradas y auditoría semanal, Sonnet en salidas | 4.00 | 5 | 0.8% al mes |
+| maxima | Opus en casi todo | 9.85 | 12 | 2% al mes |
 
 Precios con Keiner y Celeste vigilados. En equilibrada: analista Opus 5.5 ~1.26, guardián de salidas Sonnet 5.5
-~1.36, auditoría semanal Opus 5.5 ~0.89, y vigía, auditor por operación y resumen (Haiku 5.5 y Sonnet 5.5) ~0.18.
+~1.36, auditoría semanal Opus 5.5 ~0.89, cuaderno de lecciones Sonnet 5.5 ~0.28, y vigía, auditor por operación
+y resumen (Haiku 5.5 y Sonnet 5.5) ~0.18.
 
 Trend Rider y Tortuga 55 ganaron en el backtest de 2024-2026 alrededor de 1.2% al mes. La potencia "maxima" se
 comería más de lo que ganan con 500 USD; por eso la recomendada es "equilibrada", que pone el modelo más potente donde más pesa
@@ -155,6 +176,7 @@ Comandos útiles (desde `cd /opt/Ingresosbot`):
 | Comando | Qué muestra |
 |---|---|
 | `sudo -u ingresosbot .venv/bin/python ai_agents.py escalera` | Cada permiso, si está en sombra o activo, y cuántas pruebas lleva |
+| `sudo -u ingresosbot .venv/bin/python ai_agents.py lecciones` | El cuaderno: cada lección, si está en prueba, comprobada o descartada, y cuánto habría ahorrado |
 | `sudo -u ingresosbot .venv/bin/python ai_agents.py precio` | Cuánto cuesta al mes cada potencia |
 | `sudo -u ingresosbot .venv/bin/python ai_agents.py estado` | Gasto del mes, pausas, permisos y últimas decisiones |
 | `sudo -u ingresosbot .venv/bin/python ai_agents.py resumen` | Manda el resumen del día ahora |
@@ -206,5 +228,6 @@ pausas y permisos se pueden cambiar con `POST /api/ai/decide`.
 - `ai_agents.py`: los agentes, botones de Telegram, precio y la puerta que usa `bot_runner.py`.
 - `ai_autonomy.py`: las reglas de la escalera (sin IA, solo cuentas).
 - `ai_lab.py`: el laboratorio en sombra.
+- `ai_lessons.py`: el cuaderno de lecciones (rasgos de cada señal y reglas para validar lecciones, sin IA).
 - `deploy/ingresosbot-ai.service`: el servicio de systemd.
 - `tests/test_ai_agents.py`: pruebas con IA, noticias y Telegram simulados.
