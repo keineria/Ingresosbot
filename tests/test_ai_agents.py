@@ -835,5 +835,140 @@ class TestBotSwitchedOff(unittest.TestCase):
             self.assertFalse(ag.bot_off(str(Path(tmp) / "no_existe.db")))
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# Cuaderno de lecciones
+# ════════════════════════════════════════════════════════════════════════════
+import ai_lessons as al  # noqa: E402
+
+
+def add_signal(store, profile, ref, at, r, **feats):
+    store.record("analista", at, bot=profile, ref=ref, decision="OK")
+    store.conn.execute("UPDATE ai_decisions SET outcome_r = ?, resolved_at = ? WHERE bot = ? AND ref = ?",
+                       (r, at, profile, ref))
+    store.conn.commit()
+    store.save_features(profile, ref, at, {"par": "SOLUSDT", "lado": "LONG", "adx14": 30.0} | feats)
+
+
+LOW_ADX = [{"rasgo": "adx14", "op": "<", "valor": 20}]
+
+
+class TestLessonRules(unittest.TestCase):
+    def test_clean_conditions(self):
+        self.assertEqual(al.clean_conditions([{"rasgo": "adx14", "op": "<", "valor": "20"}]), LOW_ADX)
+        self.assertEqual(al.clean_conditions([{"rasgo": "par", "op": "=", "valor": "solusdt"}]),
+                         [{"rasgo": "par", "op": "=", "valor": "SOLUSDT"}])
+        for bad in ([], [{"rasgo": "inventado", "op": "<", "valor": "1"}], [{"rasgo": "adx14", "op": "=", "valor": "1"}],
+                    [{"rasgo": "adx14", "op": "<", "valor": "mucho"}], [{"rasgo": "lado", "op": "<", "valor": "LONG"}],
+                    LOW_ADX * 3):
+            self.assertIsNone(al.clean_conditions(bad), bad)
+
+    def test_matches_needs_every_condition_and_data(self):
+        conds = LOW_ADX + [{"rasgo": "lado", "op": "=", "valor": "LONG"}]
+        self.assertTrue(al.matches(conds, {"adx14": 15, "lado": "long"}))
+        self.assertFalse(al.matches(conds, {"adx14": 25, "lado": "LONG"}))
+        self.assertFalse(al.matches(conds, {"adx14": None, "lado": "LONG"}))
+
+    def sig(self, i, r, adx, at="2026-11-01"):
+        return {"ref": f"S{i}", "at": f"{at}T{i % 24:02d}:00:00+00:00", "outcome_r": r, "features": {"adx14": adx}}
+
+    def test_only_signals_after_the_lesson_count(self):
+        old = [self.sig(i, -1.0, 10, at="2026-10-01") for i in range(10)]
+        ev = al.evaluate(LOW_ADX, old, "2026-10-20T00:00:00+00:00")
+        self.assertEqual((ev.cases, ev.total_signals), (0, 0))
+
+    def test_lesson_that_saves_money_is_validated(self):
+        sigs = [self.sig(i, -0.8, 12) for i in range(7)] + [self.sig(7, 2.0, 15)]          # 7 de 8 pierden
+        sigs += [self.sig(10 + i, 2.3 if i % 2 else -0.8, 35) for i in range(8)]            # resto: 50%
+        ev = al.evaluate(LOW_ADX, sigs, "2026-10-31T00:00:00+00:00")
+        self.assertEqual(ev.cases, 8)
+        self.assertAlmostEqual(ev.saved_r, 7 * 0.8 - 2.0)
+        self.assertGreaterEqual(ev.hit_rate, ev.base_rate + 0.10)
+        self.assertEqual(al.next_status("prueba", ev, "2026-10-31T00:00:00+00:00", NOW)[0], "validada")
+        self.assertEqual(al.next_status("prueba", al.evaluate(LOW_ADX, sigs[:7], "2026-10-31T00:00:00+00:00"),
+                                        "2026-10-31T00:00:00+00:00", NOW)[0], "prueba")   # aún 7 casos
+
+    def test_lesson_that_skips_winners_is_discarded(self):
+        sigs = [self.sig(i, 2.3 if i < 3 else -0.8, 12) for i in range(8)]                 # evitaría 3 ganadoras
+        ev = al.evaluate(LOW_ADX, sigs, "2026-10-31T00:00:00+00:00")
+        self.assertLess(ev.saved_r, 0)
+        status, reason = al.next_status("prueba", ev, "2026-10-31T00:00:00+00:00", NOW)
+        self.assertEqual(status, "descartada")
+        self.assertIn("no superó", reason)
+        self.assertEqual(al.next_status("validada", ev, "2026-10-31T00:00:00+00:00", NOW)[0], "descartada")
+        self.assertEqual(al.next_status("descartada", ev, "2026-10-31T00:00:00+00:00", NOW)[0], "descartada")
+
+    def test_lesson_without_cases_expires(self):
+        ev = al.evaluate(LOW_ADX, [], "2026-06-01T00:00:00+00:00")
+        self.assertEqual(al.next_status("prueba", ev, "2026-06-01T00:00:00+00:00", NOW)[0], "descartada")
+
+    def test_features_from_signal_context(self):
+        ctx = ag.signal_context("SOLUSDT", "4h", {"layer_2_market_regime": {"indicators": {
+            "rsi14": 61.2, "atr14": 2.0, "close": 100.0, "ema200": 90.0, "extension_atr": 1.5}}}, BULL, [])["senal"]
+        f = al.signal_features(ctx, BULL, {"rendimiento_pct": {"7_dias": -3.0, "30_dias": 5.0},
+                                           "sobre_sma200_diaria": True}, "LONG")
+        self.assertEqual(set(f), set(al.RASGOS))
+        self.assertEqual((f["rsi14"], f["dist_ema200_atr"], f["btc_ret_7d_pct"], f["btc_sobre_sma200"], f["lado"]),
+                         (61.2, 5.0, -3.0, 1, "LONG"))
+        self.assertIsNotNone(f["adx14"])
+
+
+class TestLessonService(ServiceCase):
+    PROFILE = "oficial_1h"
+
+    def test_auditor_proposes_and_code_validates(self):
+        for i in range(12):                                   # 12 señales con resultado: toca proponer
+            add_signal(self.store, self.PROFILE, f"SOLUSDT|{i}", f"2026-10-{10 + i:02d}T00:00:00+00:00",
+                       -0.8 if i % 2 else 2.3, adx14=15.0 if i % 2 else 30.0)
+        reply = {"lecciones": [
+            {"texto": "Con ADX bajo, las rupturas fallan.", "condiciones": [{"rasgo": "adx14", "op": "<", "valor": "20"}]},
+            {"texto": "Mal escrita", "condiciones": [{"rasgo": "adx14", "op": "=", "valor": "20"}]}]}
+        svc = self.service(FakeProvider("anthropic", [reply]))
+        out = svc.lessons_tick(NOW)
+        self.assertEqual(len(out["propuestas"][self.PROFILE]), 1)    # la condición mal escrita se descarta
+        self.assertIn("<senales>", self.client.providers[0].calls[0]["user"])
+        lesson = self.store.lessons(self.PROFILE)[0]
+        self.assertEqual((lesson["status"], lesson["conditions"]), ("prueba", LOW_ADX))
+        self.assertEqual(svc.propose_lessons(NOW), {})                  # una vez por semana
+        # Llegan señales nuevas: con ADX bajo pierden 7 de 8; con ADX alto, mitad y mitad.
+        later = NOW + timedelta(days=3)
+        for i in range(16):
+            low = i < 8
+            add_signal(self.store, self.PROFILE, f"ETHUSDT|{i}", iso(later + timedelta(hours=i)),
+                       (-0.8 if i != 0 else 1.0) if low else (2.3 if i % 2 else -0.8), adx14=12.0 if low else 35.0)
+        changes = svc.validate_lessons(later + timedelta(days=1))
+        self.assertEqual([c["a"] for c in changes], ["validada"])
+        self.assertTrue(any("LECCIÓN COMPROBADA" in t for t in self.tg.texts()))
+        shown = ag.shown_lessons(self.store, self.PROFILE)
+        self.assertEqual(shown[0]["condicion"], "adx14 < 20.0")
+        self.assertEqual(shown[0]["prueba"]["casos"], 8)
+        self.assertIn("COMPROBADA", svc.lessons_text().upper().replace("VALIDADA", "COMPROBADA"))
+        self.assertEqual(svc.daily_facts(later)["ia"]["lecciones"]["validada"], 1)
+
+    def test_analyst_sees_only_validated_lessons_and_features_are_saved(self):
+        self.store.add_lesson(self.PROFILE, "Comprobada", LOW_ADX, "2026-10-01T00:00:00+00:00", "m")
+        self.store.update_lesson(1, "validada", {"casos": 9, "ahorro_r": 4.1, "acierto": 0.8, "azar": 0.6}, "",
+                                 "2026-10-20T00:00:00+00:00")
+        self.store.add_lesson(self.PROFILE, "En prueba", [{"rasgo": "rsi14", "op": ">", "valor": 70.0}],
+                              "2026-10-01T00:00:00+00:00", "m")
+        prov = FakeProvider("anthropic", [VOTE_OK])
+        gate = ag.AIGate("trend_state", self.store, client(self.store, prov), "sombra", clock=Clock(NOW),
+                         interval="1h", profile=self.PROFILE)
+        gate.review_signal("BTCUSDT", "1h", {}, BULL, "2026-11-08T12:00:00+00:00")
+        user = prov.calls[0]["user"]
+        self.assertIn("<lecciones>", user)
+        self.assertIn("Comprobada", user)
+        self.assertNotIn("En prueba", user)
+        row = self.store.conn.execute("SELECT features FROM ai_signal_features").fetchone()
+        self.assertEqual(json.loads(row[0])["par"], "BTCUSDT")
+
+    def test_no_lessons_when_disabled_or_few_signals(self):
+        add_signal(self.store, self.PROFILE, "SOLUSDT|1", "2026-11-01T00:00:00+00:00", -0.8)
+        svc = self.service(FakeProvider("anthropic", [{"lecciones": []}]))
+        self.assertEqual(svc.lessons_tick(NOW)["propuestas"], {})
+        self.assertEqual(self.client.providers[0].calls, [])
+        self.settings.lessons = False
+        self.assertIsNone(svc.tick()["lecciones"])
+
+
 if __name__ == "__main__":
     unittest.main()
