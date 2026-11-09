@@ -970,5 +970,34 @@ class TestLessonService(ServiceCase):
         self.assertIsNone(svc.tick()["lecciones"])
 
 
+class TestStrategyPrompts(unittest.TestCase):
+    """Cada estrategia se explica con su ficha: el analista de Celeste sabe que Tortuga 30 también vende en corto."""
+
+    def test_prompts_describe_each_strategy(self):
+        tortuga = ag.analyst_system("tortuga_params_1d")
+        self.assertIn("Tortuga 30", tortuga)
+        self.assertIn("corto", tortuga)
+        self.assertNotIn("{estrategia}", tortuga)
+        self.assertIn("Trend Rider (temporalidad 4h)", ag.analyst_system("trend_params_4h"))
+        self.assertIn("Tortuga 30", ag.exit_system("tortuga_params_1d"))
+        self.assertIn("perfil_raro", ag.strategy_brief("perfil_raro_1h") + "perfil_raro")
+
+    def test_signal_context_says_long_or_short(self):
+        short = {"order": {"side": "SHORT"}, "layer_2_market_regime": {"signal": "SHORT", "indicators": {}}}
+        self.assertEqual(ag.signal_context("PAXGUSDT", "1d", short, BULL, [])["senal"]["lado"], "SHORT")
+        self.assertIsNone(ag.signal_context("PAXGUSDT", "1d", {}, BULL, [])["senal"]["lado"])
+
+    def test_gate_sends_the_strategy_prompt(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = AIStore(Path(d) / "ai.db")
+            prov = FakeProvider("anthropic", [VOTE_OK])
+            gate = ag.AIGate("tortuga_state", store, client(store, prov), "sombra", clock=Clock(NOW),
+                             interval="1d", profile="tortuga_params_1d")
+            gate.review_signal("PAXGUSDT", "1d", {"order": {"side": "SHORT"}}, BULL, NOW.isoformat())
+            self.assertIn("Tortuga 30", prov.calls[0]["system"])
+            self.assertIn('"lado": "SHORT"', prov.calls[0]["user"])
+            store.close()
+
+
 if __name__ == "__main__":
     unittest.main()

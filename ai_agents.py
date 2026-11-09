@@ -106,12 +106,15 @@ VIGIA_SCHEMA = {
     },
 }
 
+# Cada estrategia se describe con su propia ficha de deploy/bots.json (strategy_brief): un analista que cree que
+# todas son el Trend Rider largo de 4h vetaba los cortos de Tortuga 30 por "ir contra la EMA200".
 ANALISTA_SYSTEM = (
-    "Eres el analista de señales de Trend Rider, un sistema de seguimiento de tendencia en velas de 4h (ruptura del "
-    "máximo de 20 velas sobre la EMA200, con filtro diario SMA200, stop inicial 2 ATR y trailing 5 ATR). Datos "
-    "reales de 2024-2026: gana el 36% de las veces; cuando gana obtiene +2.3R de media y cuando pierde -0.8R; "
-    "las 5 mejores operaciones de 337 hicieron el 71% de la ganancia. Por eso vetar una ganadora cuesta mucho "
-    "más de lo que ahorra vetar una perdedora: vetar al azar reduce la ganancia un 30%.\n"
+    "Eres el analista de señales de {estrategia}. Es un sistema de seguimiento de tendencia: gana pocas veces "
+    "(en Trend Rider, el 36%), pero cuando gana obtiene bastante más de lo que pierde (+2.3R de media contra "
+    "-0.8R), y unas pocas operaciones grandes hacen casi toda la ganancia. Por eso vetar una ganadora cuesta "
+    "mucho más de lo que ahorra vetar una perdedora: vetar al azar reduce la ganancia un 30%. Que la señal sea "
+    "de compra (LONG) o de venta en corto (SHORT) lo dice el campo 'lado'; juzga cada señal según las reglas de "
+    "ESTA estrategia, no las de otra.\n"
     "Votos: OK = entrar normal. REDUCIR = entrar con la mitad del riesgo, si ves un riesgo concreto pero no "
     "grave. VETO = no entrar, solo con un motivo concreto y fuerte en los datos (por ejemplo, un evento grave "
     "confirmado en los titulares o un movimiento ya extremo). Si dudas, vota OK. Cada voto se compara con el "
@@ -129,12 +132,36 @@ ANALISTA_SCHEMA = {
 }
 
 SALIDA_SYSTEM = (
-    "Eres el guardián de salidas de Trend Rider, un sistema de seguimiento de tendencia. Cada posición ya tiene "
+    "Eres el guardián de salidas de {estrategia}, un sistema de seguimiento de tendencia. Cada posición ya tiene "
     "un stop dinámico (trailing de 5 ATR) que deja correr las ganancias, y casi todo el beneficio sale de unas "
     "pocas tendencias largas: cerrar antes suele costar dinero. Vota SALIR solo si ves un motivo concreto y "
     "fuerte para cerrar YA al precio actual (un evento grave confirmado en los titulares, un agotamiento extremo "
     "tras una subida vertical). Si dudas, MANTENER. Cada voto se compara con lo que hizo después la posición; "
     "en <historial> ves tus votos recientes. Motivo en español, máximo 2 frases. " + UNTRUSTED_NOTE)
+
+
+def strategy_brief(profile: str, path: str | Path | None = None) -> str:
+    """Cómo opera la estrategia de ese perfil, con la ficha de deploy/bots.json (nombre, reglas y backtest)."""
+    try:
+        bots = json.loads(Path(path or BOTS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        bots = []
+    for b in bots if isinstance(bots, list) else []:
+        if isinstance(b, dict) and profile_key(b.get("params") or "", b.get("interval") or "1h") == profile:
+            how = " ".join(str(x) for x in b.get("how") or [])
+            return (f"{b.get('name') or profile} (temporalidad {b.get('interval') or '1h'}). "
+                    f"{b.get('summary') or ''} Reglas: {how} Backtest: {b.get('backtest') or 'sin datos'}").strip()
+    return profile_label(profile)
+
+
+def analyst_system(profile: str) -> str:
+    return ANALISTA_SYSTEM.replace("{estrategia}", strategy_brief(profile), 1)
+
+
+def exit_system(profile: str) -> str:
+    return SALIDA_SYSTEM.replace("{estrategia}", strategy_brief(profile), 1)
+
+
 SALIDA_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["voto", "confianza", "motivo"],
     "properties": {
@@ -570,8 +597,10 @@ def signal_context(symbol: str, interval: str, result: dict, df: pd.DataFrame, h
     per_day = _bars_per_day(interval)
     atr, close = float(ind.get("atr14") or 0), float(ind.get("close") or closes.iloc[-1])
     vol = df["volume"].astype(float) if "volume" in df else None
+    side = (result.get("order") or {}).get("side") or l2.get("signal")
     ctx = {
-        "par": symbol, "temporalidad": interval, "estrategia": result.get("strategy"),
+        "par": symbol, "lado": side if side in ("LONG", "SHORT") else None,
+        "temporalidad": interval, "estrategia": result.get("strategy"),
         "disparador": l2.get("entry_trigger"), "regimen": l2.get("regime"),
         "precio": round(close, 6), "indicadores": ind,
         "rendimiento_pct": {"1_dia": _ret(closes, per_day), "7_dias": _ret(closes, 7 * per_day),
@@ -721,7 +750,7 @@ class AIGate:
             self.store.save_features(self.profile, ref, iso(now), al.signal_features(ctx["senal"], df, market, side))
         except Exception as exc:
             log.warning("IA: no se guardaron los rasgos de %s (%s)", ref, exc)
-        ans = self.client.ask("analista", ANALISTA_SYSTEM, user, ANALISTA_SCHEMA)
+        ans = self.client.ask("analista", analyst_system(self.profile), user, ANALISTA_SCHEMA)
         mode = "laboratorio" if self.lab else self.analyst_mode
         if ans is None:
             self.store.record("analista", iso(now), bot=self.profile, ref=ref, decision="SIN_IA", mode=mode,
@@ -1050,7 +1079,7 @@ class AgentService:
                         f"</historial>\n<titulares>{json.dumps(recent_headlines(self.store, now), ensure_ascii=False)}"
                         "</titulares>")
                 asked += 1
-                ans = self.client.ask("salida", SALIDA_SYSTEM, user, SALIDA_SCHEMA)
+                ans = self.client.ask("salida", exit_system(profile), user, SALIDA_SCHEMA)
                 if ans is None:
                     self.store.record("salida", iso(now), bot=profile, ref=ref, decision="SIN_IA",
                                       output={"errores": self.client.last_errors})
