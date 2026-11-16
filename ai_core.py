@@ -243,15 +243,16 @@ def validate(value: Any, schema: dict, path: str = "$") -> None:
 
 
 def clamp_lengths(value: Any, schema: dict) -> Any:
-    """Recorta los textos que pasan de maxLength. La API no aplica ese límite y a veces el modelo escribe un
-    motivo largo: perder el voto entero por eso no tiene sentido. Lo demás se sigue validando igual."""
+    """Recorta los textos que pasan de maxLength y las listas que pasan de maxItems (se quedan los primeros).
+    La API no aplica esos límites y a veces el modelo escribe un motivo largo o un problema de más: perder la
+    respuesta entera por eso no tiene sentido. Lo demás se sigue validando igual."""
     if isinstance(value, str) and "maxLength" in schema and len(value) > schema["maxLength"]:
         return value[:schema["maxLength"] - 1].rstrip() + "…"
     if isinstance(value, dict):
         props = schema.get("properties", {})
         return {k: clamp_lengths(v, props[k]) if k in props else v for k, v in value.items()}
     if isinstance(value, list) and "items" in schema:
-        return [clamp_lengths(v, schema["items"]) for v in value]
+        return [clamp_lengths(v, schema["items"]) for v in value[:schema.get("maxItems", len(value))]]
     return value
 
 

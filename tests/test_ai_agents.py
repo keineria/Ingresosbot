@@ -127,6 +127,13 @@ class TestSchemaAndClient(unittest.TestCase):
         self.assertTrue(ans.data["motivo"].endswith("…"))
         self.assertEqual(ans.data["voto"], VOTE_OK["voto"])
 
+    def test_extra_items_are_dropped_not_lost(self):
+        # 15-nov-2026: el auditor semanal listó más de 5 problemas y se perdió todo su informe
+        from ai_core import clamp_lengths
+        reply = {"resumen": "r", "hipotesis": {}, "problemas": [f"p{i}" for i in range(8)]}
+        out = clamp_lengths(reply, ag.AUDITOR_WEEK_SCHEMA)
+        self.assertEqual(out["problemas"], ["p0", "p1", "p2", "p3", "p4"])
+
     def test_budget_cap_and_disabled(self):
         store = AIStore(":memory:")
         store.record("vigia", iso(NOW), decision="OK", answer=Answer({}, "anthropic", "m", 1, 1, 2.5))
