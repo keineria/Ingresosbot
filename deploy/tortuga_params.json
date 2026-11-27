@@ -8,5 +8,7 @@
   "trend_exit_on_filter": false,
   "trend_allow_short": true,
   "price_tick": 0.0001,
-  "trend_min_adx": 20.0
+  "trend_min_adx": 20.0,
+  "trend_partial_at_r": 2.0,
+  "trend_partial_pct": 33.0
 }

@@ -131,6 +131,12 @@ class TestExits(unittest.TestCase):
         self.assertEqual(len(sm.trades()), 2)
         sm.close()
 
+    def test_vote_r_waits_for_full_close_and_sums_parts(self):
+        from ai_agents import total_r
+        self.assertIsNone(total_r([(1.5, 6.0, "PARTIAL_TP")]))
+        self.assertAlmostEqual(total_r([(1.5, 6.0, "PARTIAL_TP"), (-1.0, -4.0, "TRAILING_STOP")]), 0.25)
+        self.assertEqual(total_r([(-1.0, -4.0, "STOP_LOSS")]), -1.0)
+
     def test_new_exits_off_change_nothing_in_backtest(self):
         df = q.demo_bull_trend(1500, seed=7)
         a = bt.run_backtest(df, q.Params(strategy="trend"))["report"]["results"]
