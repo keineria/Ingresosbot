@@ -86,6 +86,59 @@ class TestExits(unittest.TestCase):
         self.assertEqual(sm.positions()[0]["stop_loss"], 108.0)
         sm.close()
 
+    def test_breakeven_after_r_lifts_stop_to_entry(self):
+        p = q.Params(strategy="trend", trail_atr_mult=5.0, trend_be_after_r=1.0, trend_be_lock_pct=0.2,
+                     price_tick=0.01)
+        sm = StateManager(":memory:", 1000.0, p)
+        sm.open_position("BTCUSDT", "LONG", 100.0, 96.0, 0.0, 0.0, 0.0, 1.0, 4.0, "2024-01-01T00:00:00+00:00",
+                         trail_atr_mult=5.0)
+        sm.apply_trailing("BTCUSDT", "t1", 103.0, 100.0, 1.0)      # +0.75R: aún no; trailing 98
+        self.assertEqual(sm.positions()[0]["stop_loss"], 98.0)
+        sm.apply_trailing("BTCUSDT", "t2", 104.5, 101.0, 1.0)      # +1.1R: SL a la entrada + 0.2%
+        self.assertEqual(sm.positions()[0]["stop_loss"], 100.2)
+        ev = sm.process_candle("BTCUSDT", "t3", 101.0, 101.5, 99.0, 99.5)
+        self.assertEqual(ev[0]["exit_reason"], "TRAILING_STOP")
+        self.assertGreater(ev[0]["exit_price"], 100.0)
+        sm.close()
+        sm = StateManager(":memory:", 1000.0, p)                    # corto: espejo
+        sm.open_position("BTCUSDT", "SHORT", 100.0, 104.0, 0.0, 0.0, 0.0, 1.0, 4.0, "2024-01-01T00:00:00+00:00",
+                         trail_atr_mult=5.0)
+        sm.apply_trailing("BTCUSDT", "t1", 100.0, 95.5, 1.0)
+        self.assertEqual(sm.positions()[0]["stop_loss"], 99.8)
+        sm.close()
+
+    def test_partial_take_profit_books_part_and_keeps_rest(self):
+        p = q.Params(strategy="trend", trail_atr_mult=5.0, trend_partial_at_r=1.5, trend_partial_pct=50.0)
+        sm = StateManager(":memory:", 1000.0, p, fee_pct=0.0)
+        sm.open_position("BTCUSDT", "LONG", 100.0, 96.0, 0.0, 0.0, 0.0, 2.0, 8.0, "2024-01-01T00:00:00+00:00",
+                         trail_atr_mult=5.0)
+        self.assertEqual(sm.process_candle("BTCUSDT", "t1", 100.0, 105.0, 99.0, 104.0), [])   # +1.25R: nada
+        ev = sm.process_candle("BTCUSDT", "t2", 104.0, 107.0, 103.0, 106.0)                 # toca 106 (+1.5R)
+        self.assertEqual(len(ev), 1)
+        self.assertTrue(ev[0]["partial"])
+        self.assertEqual(ev[0]["exit_reason"], "PARTIAL_TP")
+        self.assertAlmostEqual(ev[0]["pnl_usd"], 6.0)
+        self.assertAlmostEqual(ev[0]["r_multiple"], 1.5)
+        pos = sm.positions()[0]
+        self.assertAlmostEqual(pos["position_units"], 1.0)
+        self.assertAlmostEqual(pos["risk_usd"], 4.0)
+        self.assertEqual(pos["partial_done"], 1)
+        self.assertEqual(sm.process_candle("BTCUSDT", "t3", 106.0, 110.0, 105.0, 109.0), [])  # solo una vez
+        ev = sm.process_candle("BTCUSDT", "t4", 99.0, 99.0, 95.0, 95.0)                     # el resto al stop
+        self.assertAlmostEqual(ev[0]["pnl_usd"], -4.0)
+        self.assertEqual(sm.positions(), [])
+        self.assertAlmostEqual(sm.account()["balance"], 1002.0)
+        self.assertEqual(len(sm.trades()), 2)
+        sm.close()
+
+    def test_new_exits_off_change_nothing_in_backtest(self):
+        df = q.demo_bull_trend(1500, seed=7)
+        a = bt.run_backtest(df, q.Params(strategy="trend"))["report"]["results"]
+        b = bt.run_backtest(df, q.Params(strategy="trend", trend_be_lock_pct=0.5, trend_partial_pct=30.0))
+        self.assertEqual(a, b["report"]["results"])
+        c = bt.run_backtest(df, q.Params(strategy="trend", trend_partial_at_r=1.0))["report"]["results"]
+        self.assertNotEqual(a, c)
+
 
 if __name__ == "__main__":
     unittest.main()

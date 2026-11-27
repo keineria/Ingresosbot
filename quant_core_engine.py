@@ -115,6 +115,11 @@ class Params:
     trend_stale_bars: int = 0          # tras N velas, si el cierre sigue en o bajo la entrada: fuera (trade sin empuje)
     trend_tight_after_r: float = 0.0   # al ganar X veces el riesgo inicial (R), el trailing se ajusta a...
     trend_tight_trail_atr: float = 2.5  # ...este múltiplo de ATR (asegura más ganancia en las subidas largas)
+    # Asegurar ganancia (0 = apagado). Se aplican sobre el trailing; nunca alejan el stop.
+    trend_be_after_r: float = 0.0      # con el mejor precio ya X R a favor, el SL pasa como mínimo a la entrada...
+    trend_be_lock_pct: float = 0.2     # ...más este % a favor (cubre las comisiones de ida y vuelta)
+    trend_partial_at_r: float = 0.0    # al tocar entrada + X R se vende (o recompra) una parte con orden límite...
+    trend_partial_pct: float = 50.0    # ...este % de la posición; el resto sigue con el trailing
     # Modo lateral opcional (rebote al centro del rango) cuando NO hay ruptura. Apagado por defecto.
     # LONG: ADX14 < range_max_adx, Close < banda de Bollinger inferior y RSI14 <= range_rsi_long_max.
     # SHORT (solo con trend_allow_short): espejo en la banda superior. Salida con SL y TP fijos en ATR, sin trailing.

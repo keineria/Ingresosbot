@@ -178,6 +178,8 @@ class StateManager:
         for col in ("trail_atr_mult", "trail_peak"):      # bases creadas antes del perfil "trend"
             if col not in pos_cols:
                 self.conn.execute(f"ALTER TABLE open_positions ADD COLUMN {col} REAL")
+        if "partial_done" not in pos_cols:                # toma parcial (trend_partial_at_r)
+            self.conn.execute("ALTER TABLE open_positions ADD COLUMN partial_done INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
         if self.conn.execute("SELECT COUNT(*) FROM account_state").fetchone()[0] == 0:
             self.conn.execute(
@@ -367,10 +369,42 @@ class StateManager:
                 if not reason.startswith("TAKE_PROFIT"):   # stop a mercado: deslizamiento en contra
                     price *= (1 - slip) if pos["side"] == "LONG" else (1 + slip)
                 events.append({"event": "CLOSE", **self.close_position(pos["id"], price, reason, bar_time)})
-            elif not pos["is_at_breakeven"] and break_even_touched(pos["side"], pos["breakeven_trigger"], h, l):
+                continue
+            events += self._maybe_partial(pos, o, h, l, bar_time)
+            if not pos["is_at_breakeven"] and break_even_touched(pos["side"], pos["breakeven_trigger"], h, l):
                 self._move_to_break_even(pos)
                 events.append(self._be_event(pos, None, bar_time))
         return events
+
+    def _maybe_partial(self, pos: dict, o: float, h: float, l: float, at: Any) -> list[dict]:
+        """Toma parcial (trend_partial_at_r > 0, solo posiciones con trailing): una vez por posición, al tocar
+        entrada + X R cierra trend_partial_pct % de las unidades con orden límite (al open si abrió más allá)."""
+        x = getattr(self.p, "trend_partial_at_r", 0.0)
+        if not (x > 0 and pos.get("trail_atr_mult") and not pos.get("partial_done")):
+            return []
+        risk = abs(pos["entry_price"] - pos["initial_stop_loss"])
+        if risk <= 0:
+            return []
+        d = 1 if pos["side"] == "LONG" else -1
+        target = pos["entry_price"] + d * x * risk
+        if d == 1 and h >= target:
+            price = max(target, o)
+        elif d == -1 and l <= target:
+            price = min(target, o)
+        else:
+            return []
+        frac = min(max(self.p.trend_partial_pct, 0.0), 100.0) / 100.0
+        units = pos["position_units"] * frac
+        if units <= 0:
+            return []
+        if frac >= 1.0:
+            return [{"event": "CLOSE", **self.close_position(pos["id"], price, "PARTIAL_TP", at)}]
+        trade = self._book(pos, units, price, "PARTIAL_TP", at, [(
+            "UPDATE open_positions SET position_units = ?, risk_usd = ?, partial_done = 1 WHERE id = ?",
+            (pos["position_units"] - units, pos["risk_usd"] * (1 - frac), pos["id"]))])
+        pos.update(position_units=pos["position_units"] - units, risk_usd=pos["risk_usd"] * (1 - frac),
+                   partial_done=1)
+        return [{"event": "CLOSE", "partial": True, "position_id": pos["id"], **trade}]
 
     def apply_trailing(self, symbol: str, bar_time: Any, h: float, l: float, atr_value: float) -> list[dict]:
         """Al cierre de cada vela, después de process_candle(): mueve a favor el SL de las posiciones con trailing.
@@ -394,13 +428,21 @@ class StateManager:
                 if risk > 0 and abs(best - pos["entry_price"]) >= tight_r * risk and \
                         (best - pos["entry_price"]) * (1 if pos["side"] == "LONG" else -1) > 0:
                     k = min(k, self.p.trend_tight_trail_atr)
+            tick = q.effective_tick(pos["entry_price"], self.p.price_tick)
+            be_r = getattr(self.p, "trend_be_after_r", 0.0)
+            risk0 = abs(pos["entry_price"] - pos["initial_stop_loss"])
+            lock = pos["entry_price"] * self.p.trend_be_lock_pct / 100.0
             if pos["side"] == "LONG":
                 peak = max(peak, h)
-                new_sl = q.floor_to_step(peak - k * atr_value, q.effective_tick(pos["entry_price"], self.p.price_tick))
+                new_sl = q.floor_to_step(peak - k * atr_value, tick)
+                if be_r > 0 and risk0 > 0 and peak - pos["entry_price"] >= be_r * risk0:
+                    new_sl = max(new_sl, q.ceil_to_step(pos["entry_price"] + lock, tick))
                 better = new_sl > pos["stop_loss"]
             else:
                 peak = min(peak, l)
-                new_sl = q.ceil_to_step(peak + k * atr_value, q.effective_tick(pos["entry_price"], self.p.price_tick))
+                new_sl = q.ceil_to_step(peak + k * atr_value, tick)
+                if be_r > 0 and risk0 > 0 and pos["entry_price"] - peak >= be_r * risk0:
+                    new_sl = min(new_sl, q.floor_to_step(pos["entry_price"] - lock, tick))
                 better = new_sl < pos["stop_loss"]
             self.conn.execute("UPDATE open_positions SET trail_peak = ?, stop_loss = ? WHERE id = ?",
                               (peak, new_sl if better else pos["stop_loss"], pos["id"]))
@@ -421,7 +463,9 @@ class StateManager:
                              price, price, price, _sl_reason(pos))
             if hit:
                 events.append({"event": "CLOSE", **self.close_position(pos["id"], hit[0], hit[1].replace("_GAP", ""), at)})
-            elif not pos["is_at_breakeven"] and break_even_touched(pos["side"], pos["breakeven_trigger"], price, price):
+                continue
+            events += self._maybe_partial(pos, price, price, price, at)
+            if not pos["is_at_breakeven"] and break_even_touched(pos["side"], pos["breakeven_trigger"], price, price):
                 self._move_to_break_even(pos)
                 events.append(self._be_event(pos, price, at))
         return events
@@ -431,8 +475,16 @@ class StateManager:
         if row is None:
             raise KeyError(f"Posición {position_id} no existe")
         pos = dict(row)
+        trade = self._book(pos, pos["position_units"], exit_price, reason, closed_at,
+                           [("DELETE FROM open_positions WHERE id = ?", (position_id,))])
+        return {"position_id": position_id, **trade}
+
+    def _book(self, pos: dict, units: float, exit_price: float, reason: str, closed_at: Any,
+              also: list[tuple[str, tuple]] = ()) -> dict:
+        """Apunta en trade_history el cierre de `units` unidades de pos, corre las sentencias `also` y actualiza
+        balance y Capa 1, todo en un solo commit."""
         d = 1 if pos["side"] == "LONG" else -1
-        units = pos["position_units"]
+        risk_usd = pos["risk_usd"] * (units / pos["position_units"]) if pos["position_units"] else 0.0
         fees = units * pos["entry_price"] * self.fee + units * exit_price * self.fee
         pnl = units * (exit_price - pos["entry_price"]) * d - fees
         cost = units * pos["entry_price"]
@@ -457,16 +509,17 @@ class StateManager:
             "entry_price": pos["entry_price"], "exit_price": round(exit_price, 8), "position_units": units,
             "was_at_breakeven": int(pos["is_at_breakeven"]), "pnl_usd": round(pnl, 2),
             "pnl_pct": round(pnl / cost * 100, 4) if cost else 0.0, "fees_usd": round(fees, 2),
-            "r_multiple": round(pnl / pos["risk_usd"], 4) if pos["risk_usd"] > 0 else None,
+            "r_multiple": round(pnl / risk_usd, 4) if risk_usd > 0 else None,
             "balance_after": round(new_balance, 2), "regime": pos["regime"], "risk_mode": pos["risk_mode"],
             "opened_at": pos["opened_at"], "closed_at": _ts(closed_at),
         }
         cols = ", ".join(trade)
         self.conn.execute(f"INSERT INTO trade_history ({cols}) VALUES ({', '.join('?' * len(trade))})",
                           tuple(trade.values()))
-        self.conn.execute("DELETE FROM open_positions WHERE id = ?", (position_id,))
+        for sql, args in also:
+            self.conn.execute(sql, args)
         self._save_account(s, closed_at)   # hace commit de todo junto
-        return {"position_id": position_id, **trade}
+        return trade
 
     # ── Consultas ───────────────────────────────────────────────────────────
     def trades(self, last: int | None = None) -> list[dict]:
