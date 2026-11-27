@@ -257,6 +257,18 @@ class BotRef:
         return parse_params_file(self.params_path)
 
 
+def total_r(rows) -> float | None:
+    """R de una posición ya cerrada del todo: suma sus filas (toma parcial PARTIAL_TP + cierre final).
+    None si no hay filas, si solo hay tomas parciales (sigue abierta) o si falta el R."""
+    rows = [tuple(r) for r in rows]
+    if not rows or all(r[2] == "PARTIAL_TP" for r in rows):
+        return None
+    if len(rows) == 1:
+        return None if rows[0][0] is None else float(rows[0][0])
+    risk = sum(abs(pnl / rm) for rm, pnl, _ in rows if rm)
+    return round(sum(pnl for _, pnl, _ in rows) / risk, 4) if risk > 0 else None
+
+
 def profile_key(params_path: str, interval: str) -> str:
     return f"{Path(params_path).stem if params_path else 'oficial'}_{interval}"
 
@@ -998,10 +1010,11 @@ class AgentService:
                 for v in votes:
                     symbol, opened_at = (v["ref"] or "|").split("|", 1)
                     for conn in conns:
-                        row = conn.execute("SELECT r_multiple FROM trade_history WHERE symbol = ? AND opened_at = ? "
-                                           "ORDER BY id LIMIT 1", (symbol, opened_at)).fetchone()
-                        if row is not None and row[0] is not None:
-                            self.store.resolve_vote(v["id"], float(row[0]), iso(now))
+                        rows = conn.execute("SELECT r_multiple, pnl_usd, exit_reason FROM trade_history "
+                                            "WHERE symbol = ? AND opened_at = ? ORDER BY id", (symbol, opened_at)).fetchall()
+                        r = total_r(rows)
+                        if r is not None:
+                            self.store.resolve_vote(v["id"], r, iso(now))
                             n += 1
                             break
             finally:

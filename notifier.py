@@ -147,7 +147,9 @@ class Notifier:
 
     def position_closed(self, trade: dict, account: dict) -> bool:
         icon = {"WIN": "✅", "LOSS": "🔴", "BREAKEVEN": "⚪"}.get(trade["result"], "•")
-        text = (f"{icon} POSICIÓN CERRADA {trade['result']} {trade['side']} {trade['symbol']}\n"
+        head = ("💰 GANANCIA ASEGURADA (venta parcial, el resto sigue abierto)" if trade.get("exit_reason") == "PARTIAL_TP"
+                else "POSICIÓN CERRADA")
+        text = (f"{icon} {head} {trade['result']} {trade['side']} {trade['symbol']}\n"
                 f"Motivo: {trade['exit_reason']} · {_fmt(trade['entry_price'])} → {_fmt(trade['exit_price'])}\n"
                 f"PnL: {trade['pnl_usd']:+,.2f} USD ({trade['pnl_pct']:+.2f}%) · R: {trade.get('r_multiple')}\n"
                 f"Balance: {_fmt(account['balance'])} USD · Racha de pérdidas: {account['consecutive_losses']}\n"

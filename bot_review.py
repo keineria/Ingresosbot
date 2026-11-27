@@ -84,7 +84,8 @@ def account_part(bot: dict, since: pd.Timestamp, now: pd.Timestamp) -> tuple[lis
              f"Periodo: {since:%Y-%m-%d %H:%M} → {now:%Y-%m-%d %H:%M} UTC "
              f"({(now - since).total_seconds() / 3600:.0f} h). Temporalidad {cfg.interval}, "
              f"pares {', '.join(s.replace('USDT', '') for s in cfg.symbols)}, cortos "
-             f"{'sí' if p.allow_short else 'no'}, estrategia {p.strategy}.", ""]
+             f"{'sí' if (p.trend_allow_short if p.strategy == 'trend' else p.allow_short) else 'no'}, "
+             f"estrategia {p.strategy}.", ""]
     if not Path(cfg.db_path).exists():
         return lines + [f"No existe {cfg.db_path}: el bot no se ha encendido."], {"cfg": cfg, "p": p}
     since_iso = since.isoformat()
